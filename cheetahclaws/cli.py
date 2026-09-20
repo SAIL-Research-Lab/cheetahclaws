@@ -8,7 +8,10 @@ Usage:
 Options:
   -p, --print          Non-interactive: run prompt and exit (also --print-output)
   -m, --model MODEL    Override model
-  --accept-all         Never ask permission (dangerous)
+  --accept-all         Never ask permission for this session (dangerous)
+  --auto               Autonomous: run the whole task without approval prompts
+                       (this is the default; overrides a saved /auto off)
+  --ask                Turn approval prompts back on for this run
   --verbose            Show thinking + token counts
   --version            Print version and exit
 
@@ -19,7 +22,7 @@ Slash commands in REPL:
   /config     Show config / set key=value
   /save [f]   Save session to file
   /load [f]   Load session from file
-  /resume [f] Resume last auto-saved session (or a named file)
+  /resume [f] Pick a past session by name (or pass an id / file / "last")
   /history    Print conversation history
   /context    Show context window usage
   /cost       Show API cost this session
@@ -28,7 +31,9 @@ Slash commands in REPL:
   /verbose    Toggle verbose mode
   /quiet      Toggle compact tool display (hide execution, show per-turn summary)
   /thinking   Toggle extended thinking
-  /permissions [mode]  Set permission mode
+  /permissions [mode]  Set permission mode (also: clear | allow <sig> | forget <sig|all>)
+  /auto [on|off]  Autonomous mode (ON by default): carry tasks through
+                  without asking. /auto off restores approval prompts.
   /cwd [path] Show or change working directory
   /workspace [cmd] Manage CheetahClaws workspaces (list/switch/create/delete)
   /compact    Compact conversation history to save context space
@@ -209,7 +214,7 @@ from cheetahclaws.ui.render import (
     set_terminal_title_enabled, set_task_title, terminal_working_start, terminal_working_stop,
     clear_terminal_title,
     print_tool_start, print_tool_end,
-    set_quiet, reset_turn_stats, print_turn_summary,
+    set_quiet, set_markdown_rules, reset_turn_stats, print_turn_summary,
     set_spinner_tokens, print_turn_stats,
     _RICH, console, _rgb,
 )
@@ -238,7 +243,8 @@ from cheetahclaws.commands.session import (
 # ── Config commands ────────────────────────────────────────────────────────
 from cheetahclaws.commands.config_cmd import (
     cmd_model, cmd_config, cmd_verbose, cmd_thinking, cmd_quiet,
-    cmd_permissions, cmd_cwd, _interactive_ollama_picker, cmd_terminal_setup,
+    cmd_permissions, cmd_auto, cmd_cwd, _interactive_ollama_picker,
+    cmd_terminal_setup,
 )
 from cheetahclaws.commands.workspace_cmd import cmd_workspace, _apply_workspace
 
@@ -373,19 +379,24 @@ def ask_permission_interactive(desc: str, config: dict, signature: str = "") -> 
     # "s" is the scoped alternative to the blunt accept-all: it grants exactly
     # this command/file for the rest of the session, so a task that edits one
     # file forty times asks once instead of forty times — without handing over
-    # the whole tool surface the way accept-all does.
-    hint = "[y/N/a(ccept-all)]"
+    # the whole tool surface the way accept-all does.  "!" is the same grant
+    # made permanent, so a command the user has already vouched for never
+    # prompts again in any future session either.
+    hint = "[y/N/a(ccept-all)/auto(=never ask again)]"
     if signature:
-        perm_options.append((f"🔁 Always allow {signature}", "s"))
-        hint = f"[y/N/s(ession: {signature})/a(ccept-all)]"
-    perm_options.append(("✅✅ Accept all", "a"))
+        perm_options.append((f"🔁 Always allow {signature} (this session)", "s"))
+        perm_options.append((f"💾 Always allow {signature} (remember forever)", "!"))
+        hint = (f"[y/N/s(ession: {signature})/!(remember)/a(ccept-all)/"
+                f"auto(=never ask again)]")
+    perm_options.append(("✅✅ Accept all (this session)", "a"))
+    perm_options.append(("🚀 Auto-run everything from now on", "auto"))
     text = ask_input_interactive(
         f"  Allow: {desc}  {hint} ",
         config,
         options=perm_options,
     ).strip().lower()
 
-    if signature and text in ("s", "session", "always"):
+    if signature and text in ("s", "session"):
         try:
             from cheetahclaws import runtime as _runtime
             _runtime.get_ctx(config).approved_sigs.add(signature)
@@ -399,7 +410,36 @@ def ask_permission_interactive(desc: str, config: dict, signature: str = "") -> 
             ok(f"  {msg}")
         return True
 
-    if text == "a" or text == "accept all" or text == "accept-all":
+    if signature and text in ("!", "remember", "forever", "always"):
+        from cheetahclaws.permissions import remember_signature
+        remember_signature(signature, config)
+        try:
+            from cheetahclaws import runtime as _runtime
+            _runtime.get_ctx(config).approved_sigs.add(signature)
+        except Exception:
+            pass
+        msg = (f"Always allowing {signature} — saved, this will not be asked "
+               f"again. Undo with /permissions forget {signature}")
+        if _is_in_tg_turn(config):
+            _tg_send(config.get("telegram_token"), config.get("telegram_chat_id"),
+                     f"💾 {msg}")
+        else:
+            ok(f"  {msg}")
+        return True
+
+    if text in ("auto", "autonomous", "auto-run"):
+        from cheetahclaws.permissions import set_auto_approve
+        set_auto_approve(True, config)
+        msg = ("Autonomous mode ON — tasks now run end to end without "
+               "approval prompts (saved across restarts; /auto off to undo).")
+        if _is_in_tg_turn(config):
+            _tg_send(config.get("telegram_token"), config.get("telegram_chat_id"),
+                     f"🚀 {msg}")
+        else:
+            ok(f"  {msg}")
+        return True
+
+    if text in ("a", "accept all", "accept-all"):
         config["permission_mode"] = "accept-all"
         if _is_in_tg_turn(config):
             token = config.get("telegram_token")
@@ -513,6 +553,7 @@ COMMANDS = {
     "terminal-setup": cmd_terminal_setup,
     "thinking":    cmd_thinking,
     "permissions": cmd_permissions,
+    "auto":        cmd_auto,
     "cwd":         cmd_cwd,
     "workspace":   cmd_workspace,
     "skills":      cmd_skills,
@@ -677,7 +718,10 @@ _CMD_META: dict[str, tuple[str, list[str]]] = {
     "verbose":     ("Toggle verbose output",              []),
     "quiet":       ("Toggle compact tool display",        []),
     "thinking":    ("Toggle extended thinking",           []),
-    "permissions": ("Set permission mode",                ["auto", "accept-edits", "accept-all", "manual", "plan"]),
+    "permissions": ("Set permission mode",                ["auto", "accept-edits", "accept-all", "manual", "plan",
+                                                           "clear", "allow", "forget"]),
+    "auto":        ("Run tasks end to end without approval prompts",
+                                                          ["on", "off", "status"]),
     "cwd":         ("Show / change working directory",    []),
     "workspace":   ("Manage CheetahClaws workspaces",       ["list", "switch", "default", "create", "delete"]),
     "skills":      ("List available skills",              []),
@@ -726,7 +770,8 @@ _CMD_META: dict[str, tuple[str, list[str]]] = {
     "theme":       ("List or set the console color theme",  []),
     "exit":        ("Exit cheetahclaws",              []),
     "quit":        ("Exit (alias for /exit)",             []),
-    "resume":      ("Resume last session",                []),
+    "resume":      ("Pick a past session by name (or id / file / 'last')",
+                                                          ["last"]),
 }
 
 
@@ -1151,7 +1196,15 @@ def repl(config: dict, initial_prompt: str = None):
         pname    = detect_provider(model)
         model_clr = clr(model, "cyan", "bold")
         prov_clr  = clr(f"({pname})", "dim")
-        pmode     = clr(config.get("permission_mode", "auto"), "yellow")
+        from cheetahclaws.permissions import auto_approve_on as _auto_on
+        # Autonomy is the default and silent; the banner calls out the state
+        # that would otherwise be a surprise — that this session *will* stop
+        # and ask. (ASCII only: an emoji is 2 terminal columns but len()==1,
+        # which would skew the box-drawing width maths below.)
+        _pmode_plain = config.get("permission_mode", "auto")
+        if not _auto_on(config) or _pmode_plain in ("manual", "plan"):
+            _pmode_plain += "  (asks before acting)"
+        pmode     = clr(_pmode_plain, "yellow")
         ver_clr   = clr(f"v{VERSION}", "green")
         out_mode  = "quiet" if (config.get("quiet", True) and not config.get("verbose", False)) else "full"
         out_clr   = clr(out_mode, "cyan")
@@ -1161,7 +1214,7 @@ def repl(config: dict, initial_prompt: str = None):
         title_plain = f"CheetahClaws v{VERSION}"
         line_plains = [
             f"  Model: {model} ({pname})",
-            f"  Permissions: {config.get('permission_mode', 'auto')}",
+            f"  Permissions: {_pmode_plain}",
             f"  Output: {out_mode}",
             f"  /model to switch · /help for commands",
         ]
@@ -1269,6 +1322,7 @@ def repl(config: dict, initial_prompt: str = None):
             # show one summary line per turn. Verbose always overrides it.
             quiet = config.get("quiet", True) and not verbose
             set_quiet(quiet)
+            set_markdown_rules(config.get("markdown_rules", False))
             reset_turn_stats()
             # Live token meter (estimated) + real per-turn totals for the footer.
             set_spinner_tokens(0)
@@ -2146,6 +2200,14 @@ def main():
     parser.add_argument("-m", "--model", help="Override model")
     parser.add_argument("--accept-all", action="store_true",
                         help="Never ask permission (accept all operations)")
+    parser.add_argument("--auto", "--yolo", dest="auto", action="store_true",
+                        help="Autonomous: carry the whole task through without "
+                             "approval prompts. This is the default; the flag "
+                             "is here to override a saved `/auto off`.")
+    parser.add_argument("--ask", "--no-auto", dest="ask", action="store_true",
+                        help="Turn approval prompts back on for this run "
+                             "(autonomous mode is the default). Use /auto off "
+                             "to make it stick.")
     parser.add_argument("--verbose", action="store_true",
                         help="Show thinking + token counts")
     parser.add_argument("--show-tools", "--no-quiet", dest="show_tools",
@@ -2243,6 +2305,11 @@ def main():
         config["model"] = m
     if args.accept_all:
         config["permission_mode"] = "accept-all"
+    if getattr(args, "auto", False) or getattr(args, "ask", False):
+        # persist=False: a launch flag governs this run only, so it never
+        # rewrites the user's saved preference either way.
+        from cheetahclaws.permissions import set_auto_approve
+        set_auto_approve(not getattr(args, "ask", False), config, persist=False)
     if args.verbose:
         config["verbose"] = True
     if getattr(args, "show_tools", False):

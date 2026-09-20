@@ -10,6 +10,7 @@ Provides:
 """
 from __future__ import annotations
 
+import re
 import sys
 import json
 import time
@@ -270,8 +271,65 @@ def auto_stream_mode(config: dict | None = None) -> str:
         return "live"
     return "commit"
 
+# ── Markdown thematic breaks (`---`) ───────────────────────────────────────
+# Models routinely separate sections with a `---` line. Rich renders that as a
+# full-width horizontal rule, which lands in the middle of a turn — between
+# two tool-summary lines, say — and reads like the app printed a divider.
+# Off by default; `markdown_rules=true` brings the rules back.
+_MD_RULES = False
+
+_MD_FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+# A thematic break: 3+ of `*`, `_` or `-`, optionally space-separated.
+_MD_THEMATIC_BREAK = re.compile(
+    r"^ {0,3}(?:(?:\*[ \t]*){3,}|(?:_[ \t]*){3,}|(?:-[ \t]*){3,})$")
+# A run of bare `-` directly under a paragraph line is a setext H2 underline,
+# not a rule — dropping it would silently demote a heading to body text.
+_MD_SETEXT_H2 = re.compile(r"^ {0,3}-+[ \t]*$")
+
+
+def set_markdown_rules(enabled: bool) -> None:
+    """Show (True) or drop (False) Markdown `---` horizontal rules."""
+    global _MD_RULES
+    _MD_RULES = bool(enabled)
+
+
+def _strip_thematic_breaks(text: str) -> str:
+    """Remove Markdown horizontal rules, leaving everything else intact.
+
+    Deliberately conservative: fenced code blocks are copied verbatim (a `---`
+    inside a YAML or diff sample is content, not a divider), and a bare `-`
+    run under a non-blank line is left alone because CommonMark reads that as
+    a setext H2 underline.
+    """
+    if "-" not in text and "*" not in text and "_" not in text:
+        return text
+    out: list[str] = []
+    fence: str | None = None
+    prev_blank = True          # start of text behaves like "after a blank line"
+    for line in text.split("\n"):
+        if fence is not None:
+            out.append(line)
+            if line.strip().startswith(fence):
+                fence = None
+            continue
+        m = _MD_FENCE.match(line)
+        if m:
+            fence = m.group(1)[0] * 3
+            out.append(line)
+            prev_blank = False
+            continue
+        if _MD_THEMATIC_BREAK.match(line):
+            if not (not prev_blank and _MD_SETEXT_H2.match(line)):
+                continue       # a real rule — drop it, keep prev_blank as-is
+        out.append(line)
+        prev_blank = not line.strip()
+    return "\n".join(out)
+
+
 def _make_renderable(text: str):
     """Return a Rich renderable: Markdown if text contains markup, else plain."""
+    if not _MD_RULES:
+        text = _strip_thematic_breaks(text)
     if any(c in text for c in ("#", "*", "`", "_", "[")):
         return Markdown(text, code_theme=CODE_THEME)
     return text

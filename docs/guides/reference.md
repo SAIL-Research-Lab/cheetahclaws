@@ -10,6 +10,10 @@ Options:
   -p, --print          Non-interactive: run prompt and exit
   -m, --model MODEL    Override model (e.g. gpt-4o, ollama/llama3.3)
   --accept-all         Auto-approve all operations (no permission prompts)
+  --auto, --yolo       Autonomous: carry the whole task through without any
+                       approval prompt. This is the DEFAULT; the flag only
+                       matters to override a saved `/auto off`
+  --ask, --no-auto     Turn approval prompts back on for this run
   --verbose            Show thinking blocks and per-turn token counts
   --show-tools         Show each tool call instead of a per-turn summary
                        (alias: --no-quiet; default is the compact summary)
@@ -57,12 +61,16 @@ Type `/` and press **Tab** to see all commands with descriptions. Continue typin
 | `/config key=value` | Set a config value (persisted to disk). v3.5.78+ parses JSON values: `["a","b"]`, `{"k":"v"}`, signed numbers, quoted strings — list/dict configs no longer get silently saved as literal strings. |
 | `/config context_window=<N>` | Override the context window (tokens) for the session. `0` = use the model's default. Drives the prompt `%` indicator, `/context`, the compaction trigger, **and** the per-call output-token cap — all consistently. Distinct from `max_tokens` (which is the **output** cap, not the window). Bidirectional: a smaller value forces earlier compaction; a larger value corrects a stale default. Read live, so it takes effect on the next prompt (no restart). Warns if set above the model's real window (that would disable compaction and the API may reject oversized prompts). |
 | `/config input_suggest=<bool>` | Turn the [next-prompt ghost text](#next-prompt-ghost-text) on/off (default `true`). When on, the auxiliary model drafts your likely next message after each turn and shows it dim at the prompt; **Tab** accepts it. `CHEETAH_SUGGEST=0` disables it for a single run without touching the saved config. |
+| `/config markdown_rules=true` | Render a Markdown `---` separator as a full-width horizontal rule. **Off by default** — models use `---` freely between sections, and since the tool summary prints at every round-trip the rule lands mid-turn, reading like the app drew a divider. Stripping is position-aware: setext `---` headings, `\| --- \|` table rows, `- item` lists and `---` inside a code fence are left alone |
 | `/config stream_mode=<mode>` | Force the Markdown streaming tier: `live` (full in-place Rich redraw), `commit` (append-only progressive Markdown — safe over SSH / Apple Terminal / pipes), or `plain` (raw tokens). Unset = auto-detected per device (`ui.render.auto_stream_mode`). Legacy `/config rich_live=true\|false` still works (`true`→`live`, `false`→`commit`). |
 | `/save` | Save session (auto-named by timestamp) |
 | `/save <filename>` | Save session to named file |
 | `/load` | Interactive list grouped by date; enter number, `1,2,3` to merge, or `H` for full history |
 | `/load <filename>` | Load a saved session by filename |
-| `/resume` | Restore the last auto-saved session (`mr_sessions/session_latest.json`). This file is rewritten **after every turn** (atomic `fsync` write), so `/resume` recovers a conversation even after a crash or power-loss — not only after a clean exit |
+| `/config resume_replay=false` | Restore a session silently instead of repainting the conversation. `resume_replay_limit` (default 40) caps how many messages are painted; 0 = all |
+| `/resume` | **Pick a past session by name, and see it come back.** Resuming repaints the conversation — user turns, assistant replies, one collapsed summary line per batch of tool calls. Shows recent sessions newest-first — each row is the session's opening request plus its date, turn count, model and id — with the live auto-saved session pinned at the top. Answer with a row number or a session id; Enter cancels. In a non-interactive run (`-p`, piped stdin, cron) there is nobody to answer, so it resumes the most recent session directly |
+| `/resume last` | Skip the picker: restore the last auto-saved session (`mr_sessions/session_latest.json`). This file is rewritten **after every turn** (atomic `fsync` write), so it recovers a conversation even after a crash or power-loss — not only after a clean exit |
+| `/resume <id>` | Skip the picker: load the session with that id (as shown in the picker, `/search` and `/save`) |
 | `/resume <filename>` | Load a specific file from `mr_sessions/` (or absolute path) |
 | `/history` | Print full conversation history |
 | `/context` | Visualize context-window usage as a Claude-Code-style cell grid, broken down by category (system prompt, system tools, memory files, skills, messages, free space) with per-category token counts and percentages. Honors a `context_window` override; falls back to `#`/`.` when the terminal isn't UTF-8. |
@@ -74,6 +82,10 @@ Type `/` and press **Tab** to see all commands with descriptions. Continue typin
 | `/thinking` | Toggle Extended Thinking (Claude only) |
 | `/permissions` | Show current permission mode |
 | `/permissions <mode>` | Set permission mode: `auto` / `accept-edits` / `accept-all` / `manual` / `plan` |
+| `/permissions clear` | Drop the session-scoped grants made with `s` |
+| `/permissions allow <sig> …` | Save grants so they are never asked again (same as `!` at a prompt) |
+| `/permissions forget <sig\|all>` | Drop saved grants |
+| `/auto [on\|off\|status]` | **Autonomous mode** — on by default: tasks run end to end with no approval prompts. `/auto off` turns the prompts back on, and is saved across restarts |
 | `/cwd` | Show current working directory |
 | `/cwd <path>` | Change working directory |
 | `/workspace` | Show current workspace + working directory |
@@ -393,7 +405,9 @@ Keys are saved to `~/.cheetahclaws/config.json` and loaded automatically on next
 
 ## Permission System
 
-The prompt is reserved for actions that can **change your files, run arbitrary code, or reach outside the session**. Everything else runs silently.
+**By default nothing prompts at all** — see [Autonomous mode](#autonomous-mode-auto) below. A request is carried out end to end and you get the result. The modes in this table describe what happens once you turn the prompts back on with `/auto off` (or for this run, `--ask`); `manual` and `plan` apply even while autonomy is on.
+
+When prompting is enabled, the prompt is reserved for actions that can **change your files, run arbitrary code, or reach outside the session**. Everything else runs silently.
 
 | Mode | Behavior |
 |---|---|
@@ -408,19 +422,51 @@ A **hard denylist** (`rm -rf /`, `mkfs`, `dd` to a raw disk device, `chmod -R 77
 **When prompted:**
 
 ```
-  Allow: Run: git commit -am "fix bug"  [y/N/s(ession: Bash:git commit)/a(ccept-all)]
+  Allow: Run: git commit -am "fix bug"  [y/N/s(ession: Bash:git commit)/!(remember)/a(ccept-all)/auto(=never ask again)]
 ```
 
 - `y` — approve this one action
 - `n` or Enter — deny
 - `s` — approve **and stop asking for this one thing** for the rest of the session
+- `!` — the same grant, **saved**: this one command/file is never asked about again, in this session or any future one
 - `a` — approve and switch to `accept-all` for the rest of the session
+- `auto` — approve and switch to **autonomous mode**, saved across restarts
 
-`s` is the scoped alternative to `a`. The grant covers one signature, not the
-whole tool surface: `Bash:git commit` covers any `git commit …` but no other
-`git` subcommand; `Edit:/repo/app.py` covers repeat edits to that one file but
-no other file. Grants live in memory for the session only — never written to
-`config.json` — and `/permissions` lists them, `/permissions clear` drops them.
+`s` and `!` are the scoped alternatives to `a`. The grant covers one signature,
+not the whole tool surface: `Bash:git commit` covers any `git commit …` but no
+other `git` subcommand; `Edit:/repo/app.py` covers repeat edits to that one file
+but no other file. An `s` grant lives in memory for the session; a `!` grant is
+written to the `always_allow` list in `config.json`. `/permissions` lists both;
+`/permissions clear` drops the session ones and `/permissions forget <sig|all>`
+drops the saved ones.
+
+### Autonomous mode (`/auto`)
+
+**This is the default.** A request is carried out end to end — implemented,
+run, verified — and you get the result, instead of the turn pausing at an
+approval menu for every command it needs along the way:
+
+```bash
+/auto               # show the current state
+/auto off           # turn the approval prompts back on (saved)
+/auto on            # back to the default
+cheetahclaws --ask  # prompts for this run only; nothing is written to config
+cheetahclaws --auto # autonomy for this run only (overrides a saved /auto off)
+```
+
+Autonomous mode approves every tool call, the way `accept-all` does, with one
+difference that matters: **the choice is remembered across restarts**, so a task
+never stops to ask again — and so `/auto off` stays off. The startup banner
+calls out the non-default state (`auto  (asks before acting)`), and `/auto`
+and `/status` report it either way.
+
+Still enforced while it is on:
+
+- the Bash **hard denylist** — host-destroying commands are refused at execution
+  time regardless of any approval;
+- the filesystem sandbox (`allowed_root`) and the credential-path denylist;
+- `permission_mode` `manual` and `plan`, which are explicit "ask me" / "touch
+  nothing" requests and keep overriding autonomy.
 
 **Auto-approved in `auto` mode:**
 
@@ -438,6 +484,11 @@ outside the workspace, any dot-prefixed path (`.git/hooks/*`, `.github/workflows
 `curl -o`), shell redirection (`>`), backgrounding (`&`), command substitution
 (`` ` ``, `$(…)`), sub-agent spawns (`Agent`), and any unclassified MCP/plugin tool.
 
+**Where the settings live:** `~/.cheetahclaws/config.json` stores **only what
+differs from the built-in defaults** — so the file lists what you chose, and a
+default changed in a later release reaches you too. A `config_version` marker
+records which one-time migrations have already run.
+
 **Tuning it:**
 
 ```bash
@@ -446,6 +497,8 @@ outside the workspace, any dot-prefixed path (`.git/hooks/*`, `.github/workflows
 /permissions accept-edits                                    # stop asking for edits
 /permissions manual                                          # ask for everything
 /permissions clear                                           # drop session grants
+/permissions forget all                                      # drop saved grants
+/auto off                                                    # ask before acting (saved)
 ```
 
 ---

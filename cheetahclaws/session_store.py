@@ -77,7 +77,7 @@ def save_session(session_id: str, messages: list, *,
     with _save_lock:
         conn = _get_conn()
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        messages_json = json.dumps(messages, default=str)
+        messages_json = json.dumps(messages, default=str, ensure_ascii=False)
 
         try:
             conn.execute("BEGIN IMMEDIATE")

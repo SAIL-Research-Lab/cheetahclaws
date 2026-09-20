@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cheetahclaws"
-version = "3.5.87"
+version = "3.5.88"
 description = "CheetahClaws: Agent Harness Infrastructure for Long-Horizon, Multi-Model, and Tool-Using AI Systems"
 readme = "README.md"
 requires-python = ">=3.10"

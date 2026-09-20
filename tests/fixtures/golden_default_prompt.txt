@@ -74,6 +74,7 @@ These commands the **user** can invoke at the REPL prompt — they are NOT tools
 
 - `/agent` `[start | stop | list | status | templates]` — Autonomous agent loop (task templates)
 - `/agents` — Show background agents
+- `/auto` `[on | off | status]` — Run tasks end to end without approval prompts
 - `/brainstorm` — Multi-persona AI debate + auto tasks
 - `/budget` `[session | daily | clear]` — View or set token/cost budgets (session + daily)
 - `/checkpoint` `[clear]` — List / restore checkpoints
@@ -100,14 +101,14 @@ These commands the **user** can invoke at the REPL prompt — they are NOT tools
 - `/mcp` `[reload | add | remove | list]` — Manage MCP servers
 - `/memory` `[consolidate]` — Search / list / consolidate memories
 - `/model` — Show / set model
-- `/permissions` `[auto | accept-edits | accept-all | manual | plan]` — Set permission mode
+- `/permissions` `[auto | accept-edits | accept-all | manual | plan | clear | allow | forget]` — Set permission mode
 - `/plan` `[done | status]` — Enter/exit plan mode
 - `/plugin` `[install | uninstall | enable | disable | disable-all | update | recommend | info]` — Manage plugins
 - `/proactive` `[off]` — Manage proactive background watcher
 - `/qq` `[<appid> <secret> | stop | status]` — QQ bot bridge (botpy SDK)
 - `/quiet` — Toggle compact tool display
 - `/quit` — Exit (alias for /exit)
-- `/resume` — Resume last session
+- `/resume` `[last]` — Pick a past session by name (or id / file / 'last')
 - `/rewind` `[clear]` — Rewind to checkpoint (alias)
 - `/save` — Save session to file
 - `/search` — Search past sessions
