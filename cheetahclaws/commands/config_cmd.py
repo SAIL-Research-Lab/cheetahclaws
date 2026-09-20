@@ -1,7 +1,7 @@
 """
 commands/config_cmd.py — Configuration and model commands for CheetahClaws.
 
-Commands: /model, /config, /verbose, /thinking, /permissions, /cwd
+Commands: /model, /config, /verbose, /thinking, /permissions, /auto, /cwd
 """
 from __future__ import annotations
 
@@ -209,16 +209,42 @@ def cmd_permissions(args: str, _state, config) -> bool:
         "manual":       "Ask before every tool call, including reads",
         "plan":         "Read-only: reads + safe Bash run, all edits/writes are refused (see /plan for the plan-file workflow)",
     }
+    from cheetahclaws import permissions as _perms
+    arg = args.strip()
+
     # "/permissions clear" drops the session-scoped grants made by answering
     # "s" at a prompt — the escape hatch when one was given too broadly.
-    if args.strip() in ("clear", "reset"):
+    if arg in ("clear", "reset"):
         from cheetahclaws import runtime
         grants = runtime.get_ctx(config).approved_sigs
         n = len(grants)
         grants.clear()
         ok(f"Cleared {n} session permission grant{'s' if n != 1 else ''}.")
         return True
-    if not args.strip():
+
+    # "/permissions allow <sig> ..." / "forget <sig>|all" manage the saved
+    # grants made by answering "!" at a prompt.
+    if arg.split(" ", 1)[0] in ("allow", "forget", "remember"):
+        verb, _, rest = arg.partition(" ")
+        sigs = [x for x in rest.split() if x]
+        if not sigs:
+            err(f"Usage: /permissions {verb} <signature> [<signature> ...]"
+                + ("  (or 'all')" if verb == "forget" else ""))
+            return True
+        if verb == "forget":
+            if sigs == ["all"]:
+                ok(f"Forgot {_perms.forget_all(config)} saved permission grant(s).")
+                return True
+            for sig in sigs:
+                if _perms.forget_signature(sig, config):
+                    ok(f"Forgot saved grant: {sig}")
+                else:
+                    warn(f"Not a saved grant: {sig}")
+            return True
+        added = _perms.extend_signatures(sigs, config)
+        ok(f"Saved {added} permission grant(s) — these will never be asked again.")
+        return True
+    if not arg:
         current = config.get("permission_mode", "auto")
         menu_buf = clr("\n  ── Permission Mode ──", "dim")
         for i, m in enumerate(modes):
@@ -235,6 +261,21 @@ def cmd_permissions(args: str, _state, config) -> bool:
                 menu_buf += "\n    " + clr(f"• {g}", "dim")
             if len(grants) > 10:
                 menu_buf += "\n    " + clr(f"… {len(grants) - 10} more", "dim")
+        saved = sorted(_perms.saved_signatures(config))
+        if saved:
+            menu_buf += "\n\n  " + clr(
+                f"Saved grants ({len(saved)}) — /permissions forget <sig|all> to drop:", "dim")
+            for g in saved[:10]:
+                menu_buf += "\n    " + clr(f"• {g}", "dim")
+            if len(saved) > 10:
+                menu_buf += "\n    " + clr(f"… {len(saved) - 10} more", "dim")
+        if _perms.auto_approve_on(config):
+            menu_buf += "\n\n  " + clr(
+                "🚀 Autonomous mode is ON (the default) — nothing is prompted. "
+                "/auto off to approve each step.", "dim")
+        else:
+            menu_buf += "\n\n  " + clr(
+                "Autonomous mode is OFF — /auto on to stop the prompts.", "dim")
         print(menu_buf)
         print()
         try:
@@ -252,13 +293,66 @@ def cmd_permissions(args: str, _state, config) -> bool:
         else:
             err("Invalid selection.")
     else:
-        m = args.strip()
+        m = arg
         if m not in modes:
             err(f"Unknown mode: {m}. Choose: {', '.join(modes)}")
+            info("Also: /permissions clear | allow <sig> | forget <sig|all>")
         else:
             config["permission_mode"] = m
             save_config(config)
             ok(f"Permission mode set to: {m}")
+    return True
+
+
+def cmd_auto(args: str, _state, config) -> bool:
+    """/auto [on|off] — run tasks end to end without approval prompts.
+
+    **On by default.** The point is that a request becomes a *result*: the
+    agent edits, runs and verifies whatever the task needs instead of stopping
+    at every tool call for a keystroke. Unlike ``accept-all`` (session-only by
+    design) the choice is saved, so ``/auto off`` holds across restarts too.
+
+    Still enforced in this mode: the Bash hard-denylist (host-destroying
+    commands are refused outright), the filesystem sandbox / credential-path
+    denylist, and the ``manual`` and ``plan`` permission modes, which are
+    explicit "ask me" requests and keep overriding autonomy.
+    """
+    from cheetahclaws import permissions as _perms
+    arg = args.strip().lower()
+
+    if arg in ("", "status"):
+        if _perms.auto_approve_on(config):
+            ok("🚀 Autonomous mode: ON (the default) — tasks run end to end, "
+               "nothing is prompted.")
+            info("  Want to approve each step? /auto off")
+        else:
+            info("Autonomous mode: OFF — edits and arbitrary commands ask first.")
+            info("  Back to the default:  /auto on")
+        mode = config.get("permission_mode", "auto")
+        if mode in ("manual", "plan"):
+            warn(f"  permission_mode is '{mode}', which overrides autonomous mode.")
+        saved = _perms.saved_signatures(config)
+        if saved:
+            info(f"  {len(saved)} saved per-command grant(s) — see /permissions")
+        return True
+
+    if arg in ("on", "yes", "true", "1", "enable"):
+        _perms.set_auto_approve(True, config)
+        ok("🚀 Autonomous mode ON — I'll carry tasks through without asking.")
+        mode = config.get("permission_mode", "auto")
+        if mode in ("manual", "plan"):
+            warn(f"  Note: permission_mode is '{mode}' and still asks/blocks. "
+                 f"Run /permissions auto to clear it.")
+        info("  Host-destroying commands are still refused. /auto off to undo.")
+        return True
+
+    if arg in ("off", "no", "false", "0", "disable"):
+        _perms.set_auto_approve(False, config)
+        ok("Autonomous mode OFF — edits and arbitrary commands ask first again.")
+        info("  This is saved; /auto on (the default) stops the prompts.")
+        return True
+
+    err(f"Unknown option: {arg}. Usage: /auto [on|off|status]")
     return True
 
 

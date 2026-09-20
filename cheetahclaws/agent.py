@@ -777,6 +777,16 @@ def _permission_signature(tc: dict) -> str:
             parts = cmd.split()[:2]
         if not parts:
             return "Bash"
+        # `shlex.split` keeps shell operators glued to the token they touch, so
+        # `date; date -u` yields "date;" — a signature that matches nothing a
+        # user would run twice, which makes a grant made for it dead on
+        # arrival. Trim the operators off both ends and drop a leading
+        # `VAR=value` assignment so the signature names the actual program.
+        parts = [t.strip(";&|") for t in parts]
+        while parts and ("=" in parts[0] and not parts[0].startswith("-")):
+            parts = parts[1:]
+        if not parts or not parts[0]:
+            return "Bash"
         prog = os.path.basename(parts[0])
         _MULTI = {"git", "npm", "pnpm", "yarn", "pip", "pip3", "uv", "cargo",
                   "go", "docker", "kubectl", "make", "poetry", "conda",
@@ -791,9 +801,17 @@ def _permission_signature(tc: dict) -> str:
 
 
 def _session_approved(tc: dict, config: dict) -> bool:
-    """True if the user already granted this signature for the session."""
+    """True if this signature was already granted — for the session ("s" at
+    a prompt) or permanently ("!" at a prompt, stored in config)."""
     try:
-        return _permission_signature(tc) in runtime.get_ctx(config).approved_sigs
+        sig = _permission_signature(tc)
+    except Exception:
+        return False
+    from cheetahclaws.permissions import is_always_allowed
+    if is_always_allowed(sig, config):
+        return True
+    try:
+        return sig in runtime.get_ctx(config).approved_sigs
     except Exception:
         return False
 
@@ -828,7 +846,16 @@ def _check_permission(tc: dict, config: dict) -> bool:
             return _is_safe_bash(tc["input"].get("command", ""), config)
         return True  # reads are fine
 
-    # Already granted for this session by answering "s" at an earlier prompt.
+    # Full autonomy: the user asked for the task to be carried out end to end
+    # without approval stops. Deliberately checked *after* manual/plan so an
+    # explicit "ask me everything" mode still wins, and it never reaches the
+    # Bash hard-denylist, which refuses host-destroying commands regardless.
+    from cheetahclaws.permissions import auto_approve_on
+    if auto_approve_on(config):
+        return True
+
+    # Already granted by answering "s" (this session) or "!" (permanently)
+    # at an earlier prompt.
     if _session_approved(tc, config):
         return True
 

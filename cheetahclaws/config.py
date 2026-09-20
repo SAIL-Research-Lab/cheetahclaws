@@ -23,6 +23,22 @@ DEFAULTS = {
     # compaction safety net — the API may then reject oversized prompts.
     "context_window":   0,
     "permission_mode":  "auto",   # auto | accept-edits | accept-all | manual | plan
+    # Full autonomy, and the default: a request is carried out end to end and
+    # you get the result, instead of the turn stopping at an approval menu for
+    # every command it needs to run. Remembered across restarts (unlike the
+    # session-only `accept-all`).
+    #
+    # Turn the prompts back on with `/auto off` (persisted) or the `--ask`
+    # launch flag (one run). Still enforced while this is on: the Bash
+    # hard-denylist refuses host-destroying commands at execution time, the
+    # filesystem sandbox and credential-path denylist still apply, and the
+    # `manual` / `plan` permission modes still override it.
+    "auto_approve":     True,
+    # Permission signatures approved for good — "Bash:pytest", "Bash:git push",
+    # "Edit:/repo/app.py". Answering "!" at a prompt appends one, so a command
+    # you have already vouched for never prompts again in any future session.
+    # Inspect with `/permissions`, drop with `/permissions forget <sig|all>`.
+    "always_allow":     [],
     # Extra program names to treat as read-only in the Bash auto-approval
     # check (tools/security.py). Use for a project's own reporting/query
     # commands so routine calls stop prompting:
@@ -35,6 +51,19 @@ DEFAULTS = {
     # (.git/, .github/, .env) still prompt. Set False to review every write.
     "auto_create_files": True,
     "verbose":          False,
+    # Render a Markdown `---` separator as a full-width horizontal rule.
+    # Models use `---` freely to divide sections, and the rule then lands
+    # mid-turn — between two tool-summary lines, say — where it reads like
+    # the app drew a divider rather than the answer containing one. Off by
+    # default; the surrounding blank line already separates the sections.
+    "markdown_rules":   False,
+    # /resume repaints the loaded conversation so a resumed session looks
+    # resumed, instead of restoring it invisibly and leaving you talking to
+    # something that remembers a conversation you can't see. Set False to
+    # restore silently; resume_replay_limit caps how many messages are
+    # painted (0 = all) so a very long session doesn't flood the terminal.
+    "resume_replay":       True,
+    "resume_replay_limit": 40,
     # terminal_title: set the terminal window/tab title to the current task —
     #   a pulsing glyph while working, a static badge when idle (Claude-Code
     #   style). Auto-disabled on non-TTYs / dumb terminals. Set False to leave
@@ -190,6 +219,61 @@ DEFAULTS = {
 }
 
 
+# Bumped whenever a saved config needs fixing up on load. Deliberately NOT a
+# DEFAULTS key: save_config prunes default-valued keys, which would erase the
+# marker and make every migration run again on the next launch.
+CONFIG_VERSION = 2
+
+
+def _migrate_saved_config(saved: dict) -> dict:
+    """Fix up a config written by an older build, and record that we did.
+
+    Rewrites the file in place when something changed, so the repair happens
+    once rather than on every launch. Best-effort: a read-only HOME still gets
+    the corrected values for the running session.
+    """
+    version = saved.get("config_version", 0)
+    if version >= CONFIG_VERSION:
+        return saved
+    out = dict(saved)
+
+    # v0/v1 → v2: `auto_approve` shipped as False, and save_config persisted
+    # every key including the defaults — so the False was frozen into configs
+    # that never chose it, and flipping the default to True (autonomous by
+    # default) could not reach them. Drop the inherited value; a deliberate
+    # `/auto off` after this migration writes it back and is then kept,
+    # because save_config only persists what differs from DEFAULTS.
+    if version < 2 and out.get("auto_approve") is False:
+        out.pop("auto_approve", None)
+
+    # Saved grants whose signature still carries a shell operator were written
+    # by the old signature builder ("Bash:date;" for `date; date -u`). They can
+    # never match anything the current builder produces, so they are dead
+    # entries that only make `/permissions` confusing.
+    if version < 2 and isinstance(out.get("always_allow"), list):
+        cleaned = [g for g in out["always_allow"]
+                   if not (isinstance(g, str) and any(ch in g for ch in ";&|"))]
+        if cleaned != out["always_allow"]:
+            out["always_allow"] = cleaned
+
+    # …and prune the rest of the frozen defaults in the same pass, so the file
+    # is clean now rather than only after the next save. Without this, all ~76
+    # inherited values sit there blocking the *next* default change too.
+    if version < 2:
+        out = {k: v for k, v in out.items()
+               if k not in DEFAULTS or v != DEFAULTS[k]}
+
+    out["config_version"] = CONFIG_VERSION
+    if out != saved:
+        try:
+            CONFIG_DIR.mkdir(exist_ok=True)
+            CONFIG_FILE.write_text(json.dumps(out, indent=2, ensure_ascii=False),
+                                   encoding="utf-8")
+        except Exception:
+            pass
+    return out
+
+
 def load_config() -> dict:
     CONFIG_DIR.mkdir(exist_ok=True)
     SESSIONS_DIR.mkdir(exist_ok=True)
@@ -197,8 +281,9 @@ def load_config() -> dict:
     saved_config: dict = {}
     if CONFIG_FILE.exists():
         try:
-            saved_config = json.loads(CONFIG_FILE.read_text())
+            saved_config = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
             if isinstance(saved_config, dict):
+                saved_config = _migrate_saved_config(saved_config)
                 cfg.update(saved_config)
             else:
                 saved_config = {}
@@ -231,7 +316,19 @@ def save_config(cfg: dict):
     # clicked "Accept all" silently keeps that mode on every future launch.
     if data.get("permission_mode") == "accept-all":
         data.pop("permission_mode", None)
-    CONFIG_FILE.write_text(json.dumps(data, indent=2))
+    # Write only what differs from DEFAULTS. This used to persist all ~76 keys,
+    # which quietly froze every default into the file the first time anything
+    # called save_config — so changing a default in a later release never
+    # reached an existing user, it only reached a brand-new install. Since
+    # load_config layers the saved file over DEFAULTS, dropping default-valued
+    # keys loads identically while letting defaults actually be defaults.
+    # `config_version` is deliberately absent from DEFAULTS so migrations
+    # can't prune the marker that records they already ran.
+    data = {k: v for k, v in data.items()
+            if k not in DEFAULTS or v != DEFAULTS[k]}
+    data["config_version"] = CONFIG_VERSION
+    CONFIG_FILE.write_text(json.dumps(data, indent=2, ensure_ascii=False),
+                           encoding="utf-8")
 
 
 def current_provider(cfg: dict) -> str:

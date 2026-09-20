@@ -83,7 +83,7 @@ def upload_session(
     ts = datetime.now().strftime("%Y-%m-%d %H:%M")
     desc = f"{GIST_TAG} {description or ts}"
     filename = f"cheetahclaws_session_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-    content = json.dumps(session_data, indent=2, default=str)
+    content = json.dumps(session_data, indent=2, default=str, ensure_ascii=False)
 
     body = {
         "description": desc,
