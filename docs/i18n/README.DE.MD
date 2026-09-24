@@ -209,9 +209,12 @@ Claude Code ist ein leistungsstarker, produktionsreifer KI-Coding-Assistent – 
 | **DeepSeek** | `deepseek-chat` · `deepseek-reasoner` | 64k | `DEEPSEEK_API_KEY` |
 | **MiniMax** | `MiniMax-Text-01` · `MiniMax-VL-01` · `abab6.5s-chat` | 256k–1M | `MINIMAX_API_KEY` |
 | **OpenRouter** _(400+ Modelle, ein Schlüssel)_ | `openrouter/deepseek/deepseek-v4-flash` · `openrouter/anthropic/claude-sonnet-4-6` · `openrouter/openai/gpt-5` | variiert | `OPENROUTER_API_KEY` |
+| **Requesty** _(700+ Modelle, ein Schlüssel)_ | `requesty/openai/gpt-4o-mini` · `requesty/anthropic/claude-sonnet-4-6` · `requesty/claude-sonnet-4-6` | variiert | `REQUESTY_API_KEY` |
 | **AWS Bedrock / Azure / Vertex** _(über litellm)_ | `litellm/<provider>/<model>` | variiert | anbieterspezifisch |
 
 > **`openrouter/`-Gateway:** ein Schlüssel für über 400 Modelle verschiedener Anbieter. Die Modell-ID behält den Upstream-Pfad `<vendor>/<model>` von OpenRouter bei, der Aufruf ist also doppelt präfixiert: `openrouter/deepseek/deepseek-v4-flash`. Um festzulegen, welcher Upstream-Anbieter (und welche Quantisierung) die Anfrage bedient, hänge `@<provider>[/<quantization>]` an — `openrouter/deepseek/deepseek-v4-flash@gmicloud/fp8` — das als `provider`-Objekt im Request-Body gesendet wird, statt in die Modell-ID eingebaut zu werden. Siehe [usage.md](../guides/usage.md#openrouter-400-models-one-key).
+
+> **`requesty/`-Gateway:** funktioniert genauso: alles nach `requesty/` wird als Modell-ID gesendet, entweder ein Katalogpfad `<vendor>/<model>` (`requesty/openai/gpt-4o-mini`) oder eine Managed-Policy-ID (`requesty/claude-sonnet-4-6`). Managed-Policy-IDs mit der Endung `@eu` (`requesty/gpt-5-mini@eu`) werden nur über EU-Anbieter geroutet. Siehe [usage.md](../guides/usage.md#requesty-700-models-one-key).
 
 > **`litellm/`-Adapter:** leitet zu über 100 Anbietern hinter einem SDK weiter – hauptsächlich für Upstreams mit umständlicher Authentifizierung (Bedrock SigV4, Azure-Deployment-Routing, Vertex-Service-Account-JWTs). Für einfache OpenAI-förmige Endpunkte ist der abhängigkeitsfreie `custom/`-Adapter vorzuziehen. Installiere mit `pip install ".[litellm]"`. Siehe [recipes.md](../guides/recipes.md#alternative-cloud-providers-with-non-trivial-auth-via-the-litellm-provider).
 

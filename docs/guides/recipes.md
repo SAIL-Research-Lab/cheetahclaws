@@ -147,7 +147,9 @@ over both `custom/` and `litellm/openrouter/…`: the base URL and key env
 (`OPENROUTER_API_KEY`) are built in, the models show up in the `/model` Tab
 picker, and it is the only route that supports pinning the upstream provider
 with the `@<provider>[/<quantization>]` suffix. See
-[usage.md](usage.md#openrouter-400-models-one-key).
+[usage.md](usage.md#openrouter-400-models-one-key). The same goes for
+Requesty: use `requesty/<model>` with `REQUESTY_API_KEY` rather than
+`custom/` (see [usage.md](usage.md#requesty-700-models-one-key)).
 
 ---
 
