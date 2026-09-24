@@ -10,6 +10,7 @@ Supported providers:
   zhipu      — Zhipu GLM (glm-4, glm-4-plus, ...)
   deepseek   — DeepSeek (deepseek-v4-flash, deepseek-v4-pro, deepseek-chat, deepseek-reasoner)
   openrouter — OpenRouter (openrouter/deepseek/deepseek-v4-flash, ...)
+  requesty   — Requesty (requesty/openai/gpt-4o-mini, requesty/claude-sonnet-4-6, ...)
   minimax    — MiniMax (MiniMax-Text-01, abab6.5s-chat, ...)
   ollama     — Local Ollama (llama3.3, qwen2.5-coder, ...)
   lmstudio   — Local LM Studio (any loaded model)
@@ -22,7 +23,8 @@ Model string formats:
   "custom/my-model"          uses CUSTOM_BASE_URL from config
   "openrouter/<vendor>/<model>"  multi-level path: the first segment is the
   provider, everything after it is passed through as the upstream model ID
-  (e.g. "openrouter/deepseek/deepseek-v4-flash"). Also used by nim/ and litellm/.
+  (e.g. "openrouter/deepseek/deepseek-v4-flash"). Also used by nim/, requesty/
+  and litellm/.
   "openrouter/<vendor>/<model>@<provider>[/<quant>]"  optional routing suffix:
   pins the secondary OpenRouter provider (and quantization level) via the
   `provider` request body, keeping the model field a real model ID.
@@ -137,6 +139,35 @@ PROVIDERS: dict[str, dict] = {
             "meta-llama/llama-3.3-70b-instruct",
             "qwen/qwen3-235b-a22b",
             "mistralai/mistral-large-latest",
+        ],
+    },
+    # Requesty: LLM gateway with 700+ models behind one OpenAI-compatible
+    # endpoint. Get a key at https://app.requesty.ai/api-keys. Like OpenRouter,
+    # the model ID after the first segment is passed through verbatim, either a
+    # catalog <vendor>/<model> path or a managed policy ID (no vendor prefix):
+    #   /model requesty/openai/gpt-4o-mini
+    #   /model requesty/claude-sonnet-4-6
+    # Managed policy IDs ending in "@eu" route through EU providers only; the
+    # suffix is part of the model ID and is sent as is.
+    "requesty": {
+        "type":       "openai",
+        "api_key_env": "REQUESTY_API_KEY",
+        "base_url":   "https://router.requesty.ai/v1",
+        "context_limit": 128000,
+        "max_completion_tokens": 16384,
+        "models": [
+            "claude-sonnet-4-6",
+            "claude-haiku-4-5",
+            "gpt-5.4",
+            "gpt-5.4-mini",
+            "deepseek-v4-flash",
+            "deepseek-v4-pro",
+            "gemini-3.5-flash",
+            "kimi-k3",
+            "glm-5.3",
+            "qwen3.8-max",
+            "openai/gpt-4o-mini",
+            "anthropic/claude-sonnet-4-6",
         ],
     },
     "minimax": {
