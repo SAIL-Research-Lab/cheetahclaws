@@ -39,10 +39,50 @@ _SKILL_LIST_SCHEMA = {
 }
 
 
+def _normalize_args(args: object) -> tuple[bool, str]:
+    """Coerce model-supplied `args` into a plain string, or say why not.
+
+    The schema declares `args` as a string, but small/open models on custom
+    providers often wrap every tool input in an object (they see
+    `input: {...}` for all tools). Before the check, `substitute_arguments`
+    did `prompt.replace("$ARGUMENTS", args)` and crashed with a raw
+    `TypeError: replace() argument 2 must be str, not dict` — an error the
+    model cannot correct, so it retried the same call and gave up (#182).
+
+    Accepted shapes:
+    - str: unchanged.
+    - dict with a single string value (the observed `{"args": "..."}`): unwrap.
+    - list of str: join with spaces (the observed `["--env", "prod"]`).
+    Anything else returns (False, explanation) so the caller can hand the
+    model a concrete instruction instead of a traceback.
+    """
+    if isinstance(args, str):
+        return True, args
+    if isinstance(args, dict):
+        values = [v for v in args.values() if isinstance(v, str)]
+        if len(args) == 1 and len(values) == 1:
+            return True, values[0]
+        return False, (
+            f"Skill 'args' must be a string, got an object with keys "
+            f"{sorted(args)}. Pass args as a single string, e.g. "
+            f"\"--corpus X --k 5\"."
+        )
+    if isinstance(args, list):
+        if all(isinstance(v, str) for v in args):
+            return True, " ".join(args)
+        return False, "Skill 'args' list must contain only strings."
+    return False, (
+        f"Skill 'args' must be a string, got {type(args).__name__}. "
+        f"Pass args as a single string."
+    )
+
+
 def _skill_tool(params: dict, config: dict) -> str:
     """Execute a skill by name and return its output."""
     skill_name = params.get("name", "").strip()
-    args = params.get("args", "")
+    args_ok, args = _normalize_args(params.get("args", ""))
+    if not args_ok:
+        return f"Error: {args}"
 
     # Look up by name first, then by trigger
     skill = None
