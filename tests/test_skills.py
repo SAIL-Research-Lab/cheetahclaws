@@ -48,6 +48,7 @@ def skill_dir(tmp_path, monkeypatch):
     skills_dir.mkdir()
     (skills_dir / "commit.md").write_text(COMMIT_MD, encoding="utf-8")
     (skills_dir / "review.md").write_text(REVIEW_MD, encoding="utf-8")
+    (skills_dir / "deploy.md").write_text(ARGS_MD, encoding="utf-8")
 
     monkeypatch.setattr(_loader, "_get_skill_paths", lambda: [skills_dir])
     # Also patch the builtin list to be empty so tests are predictable
@@ -133,9 +134,9 @@ def test_parse_skill_file_allowed_tools(tmp_path):
 
 def test_load_skills(skill_dir):
     skills = load_skills()
-    assert len(skills) == 2
+    assert len(skills) == 3
     names = {s.name for s in skills}
-    assert names == {"commit", "review"}
+    assert names == {"commit", "review", "deploy"}
 
 
 def test_load_skills_empty_dir(tmp_path, monkeypatch):
@@ -278,3 +279,54 @@ def test_load_skills_finds_nested(tmp_path, monkeypatch):
     monkeypatch.setattr(_loader, "_BUILTIN_SKILLS", [])
     skills = load_skills()
     assert any(s.name == "myskill" for s in skills)
+
+
+# ------------------------------------------------------------------
+# _skill_tool args normalization (#182)
+# ------------------------------------------------------------------
+
+from cheetahclaws.skill.tools import _skill_tool
+
+
+def _fake_run(*args, **kwargs):
+    class _Ev:
+        text = "deployed to prod"
+    yield _Ev()
+
+
+def _call_skill(params):
+    """Run _skill_tool against the deploy skill. A regression that raises will
+    fail the test outright — that is the point of the suite."""
+    return _skill_tool(params, {})
+
+
+def test_skill_tool_coerces_dict_wrapped_single_value_args(skill_dir, monkeypatch):
+    """#182: a model that wraps args in an object (`{"args": {...}}`) must not
+    crash the Skill tool — take the single string value and proceed."""
+    monkeypatch.setattr("cheetahclaws.agent.run", _fake_run)
+    out = _call_skill({"name": "deploy", "args": {"args": "--env prod"}})
+    assert "CRASH" not in out
+    assert "deployed to prod" in out
+
+
+def test_skill_tool_joins_list_args(skill_dir, monkeypatch):
+    monkeypatch.setattr("cheetahclaws.agent.run", _fake_run)
+    out = _call_skill({"name": "deploy", "args": ["--env", "prod"]})
+    assert "CRASH" not in out
+    assert "deployed to prod" in out
+
+
+def test_skill_tool_rejects_multivalue_dict_with_clear_error(skill_dir, monkeypatch):
+    """Multi-key dicts have no unambiguous string form — return an error the
+    model can act on instead of a raw TypeError."""
+    monkeypatch.setattr("cheetahclaws.agent.run", _fake_run)
+    out = _call_skill({"name": "deploy", "args": {"env": "prod", "version": "1"}})
+    assert "CRASH" not in out
+    assert "must be a string" in out
+
+
+def test_skill_tool_rejects_non_string_args(skill_dir, monkeypatch):
+    monkeypatch.setattr("cheetahclaws.agent.run", _fake_run)
+    out = _call_skill({"name": "deploy", "args": 123})
+    assert "CRASH" not in out
+    assert "must be a string" in out
