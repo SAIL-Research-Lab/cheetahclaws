@@ -501,8 +501,14 @@ def _fetch_custom_model_limit(base_url: str, model: str, api_key: str) -> int | 
     128000 default.
     """
     cache = _custom_ctx_cache.setdefault(base_url, {})
-    if model in cache:
-        return cache[model]
+    # Gateway routes keep the provider prefix ("custom/tools-pool") while the
+    # endpoint lists bare ids ("tools-pool"), so look the cache up by the bare
+    # id and remember a miss (0) — otherwise a model the endpoint does not
+    # describe is asked about before every call (184 GETs for 47 completions
+    # in one long session on 3.5.87, #183).
+    key = bare_model(model)
+    if key in cache:
+        return cache[key] or None
     try:
         url = base_url.rstrip("/") + "/models"
         req = urllib.request.Request(
@@ -515,7 +521,12 @@ def _fetch_custom_model_limit(base_url: str, model: str, api_key: str) -> int | 
             limit = entry.get("max_model_len") or entry.get("context_window")
             if limit:
                 cache[mid] = int(limit)
-        result = cache.get(model)
+        result = cache.get(key)
+        if result is None:
+            # Remember the miss so /v1/models is not re-fetched before every
+            # call for a model the endpoint does not describe. 0 stands for
+            # "unknown" and is returned as None by the cache-hit branch above.
+            cache[key] = 0
         # Backfill provider-level default with the most conservative value seen.
         # Compaction reads PROVIDERS[provider]['context_limit'] without knowing
         # base_url, so this makes the threshold see the real limit.
