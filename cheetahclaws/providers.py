@@ -30,6 +30,7 @@ Model string formats:
 """
 from __future__ import annotations
 import json
+import math
 import os
 import threading
 import time
@@ -490,6 +491,28 @@ _MODEL_CONTEXT_LIMITS: dict[str, int] = {
 
 # Cache: base_url → {model_id → max_model_len}
 _custom_ctx_cache: dict[str, dict[str, int]] = {}
+# (base_url, model) → time.monotonic() before which /models is not asked again.
+# Kept apart from the cache above so that one only ever holds real limits.
+# An endpoint that answered without a limit for the model won't grow one, so
+# that is remembered for the process (math.inf); a failed request is retried,
+# but not before every model and tool call while the endpoint is down or slow.
+_custom_ctx_skip_until: dict[tuple[str, str], float] = {}
+_CUSTOM_CTX_FAILURE_RETRY_S = 30.0
+
+
+def _cached_custom_limit(cache: dict[str, int], model: str) -> int | None:
+    """Look up `model` among the ids an endpoint listed.
+
+    Callers disagree on the form: stream_openai_compat passes the id with the
+    provider prefix already stripped, compaction passes "custom/<id>". Try the
+    string as given first and only then drop a leading "custom/" — bare_model()
+    would also eat the vendor segment of an already-bare "Qwen/Qwen3-Coder".
+    """
+    if model in cache:
+        return cache[model]
+    if model.startswith("custom/"):
+        return cache.get(model[len("custom/"):])
+    return None
 
 
 def _fetch_custom_model_limit(base_url: str, model: str, api_key: str) -> int | None:
@@ -501,8 +524,11 @@ def _fetch_custom_model_limit(base_url: str, model: str, api_key: str) -> int | 
     128000 default.
     """
     cache = _custom_ctx_cache.setdefault(base_url, {})
-    if model in cache:
-        return cache[model]
+    cached = _cached_custom_limit(cache, model)
+    if cached is not None:
+        return cached
+    if time.monotonic() < _custom_ctx_skip_until.get((base_url, model), 0.0):
+        return None
     try:
         url = base_url.rstrip("/") + "/models"
         req = urllib.request.Request(
@@ -515,16 +541,22 @@ def _fetch_custom_model_limit(base_url: str, model: str, api_key: str) -> int | 
             limit = entry.get("max_model_len") or entry.get("context_window")
             if limit:
                 cache[mid] = int(limit)
-        result = cache.get(model)
+        result = _cached_custom_limit(cache, model)
+        if result is None:
+            # The endpoint answered but doesn't describe this model (llama-server
+            # and LiteLLM report no max_model_len): remember that, or /models is
+            # re-fetched before every call.
+            _custom_ctx_skip_until[(base_url, model)] = math.inf
         # Backfill provider-level default with the most conservative value seen.
         # Compaction reads PROVIDERS[provider]['context_limit'] without knowing
         # base_url, so this makes the threshold see the real limit.
         if cache:
-            smallest = min(v for v in cache.values() if v)
-            if smallest:
-                PROVIDERS.setdefault("custom", {})["context_limit"] = smallest
+            PROVIDERS.setdefault("custom", {})["context_limit"] = min(cache.values())
         return result
     except Exception:
+        _custom_ctx_skip_until[(base_url, model)] = (
+            time.monotonic() + _CUSTOM_CTX_FAILURE_RETRY_S
+        )
         return None
 
 

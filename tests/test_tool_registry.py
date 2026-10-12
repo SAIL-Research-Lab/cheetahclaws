@@ -371,3 +371,34 @@ def test_duplicate_register_overwrites():
     assert len(get_all_tools()) == 1
     result = execute_tool("dup", {}, config={})
     assert result == "new"
+
+
+def test_output_cap_honors_context_window_override():
+    """The cap follows the config's context window, not just the registry's
+    provider-wide default for the model (#184)."""
+    from cheetahclaws.tool_registry import _effective_output_cap
+
+    model = "custom/some-local-model"
+    assert _effective_output_cap({"model": model}, 32000) == 7000
+    assert _effective_output_cap({"model": model, "context_window": 16000}, 32000) == 2000
+    assert _effective_output_cap({"model": model, "context_window": 24000}, 32000) == 4000
+
+
+def test_output_cap_uses_custom_endpoint_model_limit(monkeypatch):
+    """A custom model's own limit wins over the smallest limit on the endpoint,
+    which is what the provider-wide default gets backfilled with."""
+    # compaction's own reference: other test modules reload cheetahclaws.providers.
+    from cheetahclaws.compaction import providers as _providers
+    from cheetahclaws.tool_registry import _effective_output_cap
+
+    monkeypatch.setattr(_providers, "_custom_ctx_cache", {
+        "http://endpoint/v1": {"big-model": 131072, "tiny-model": 8192},
+    })
+    monkeypatch.setitem(
+        _providers.PROVIDERS, "custom",
+        {**_providers.PROVIDERS.get("custom", {}), "context_limit": 8192},
+    )
+    config = {"model": "custom/big-model", "custom_base_url": "http://endpoint/v1"}
+
+    assert _effective_output_cap(config, 32000) == 7000
+    assert _effective_output_cap({"model": "custom/big-model"}, 32000) == 2000
