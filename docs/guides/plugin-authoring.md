@@ -162,7 +162,7 @@ def my_handler(params: dict, config: dict) -> str:
 - `params` — the JSON parameters from the AI, validated against your `input_schema`
 - `config` — the runtime config dict (model, API keys, settings)
 - Return a **string** — this is what the AI sees as the tool result
-- Output is auto-truncated to `max_tool_output` (default 32KB)
+- Output is trimmed to fit the model's context — between 2,000 and 7,000 characters depending on the context window. The middle is cut and replaced with a `[... N chars truncated ...]` marker, so put what matters at the start or the end
 
 ### ToolDef fields
 

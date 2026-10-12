@@ -124,7 +124,10 @@ def _grep(
     cwd: str = None,
 ) -> str:
     use_rg = _has_rg()
-    cmd = ["rg" if use_rg else "grep", "--no-heading"]
+    # grep needs its own flags: it rejects ripgrep's --no-heading outright, and
+    # without -r it won't descend into a directory. -E keeps the regex dialect
+    # close to ripgrep's; -I skips binary files as ripgrep does.
+    cmd = ["rg", "--no-heading"] if use_rg else ["grep", "-r", "-E", "-I"]
     if case_insensitive:
         cmd.append("-i")
     if output_mode == "files_with_matches":
@@ -137,11 +140,21 @@ def _grep(
             cmd += ["-C", str(context)]
     if glob:
         cmd += (["--glob", glob] if use_rg else ["--include", glob])
-    cmd.append(pattern)
+    cmd += ["-e", pattern]
     cmd.append(path or cwd or str(Path.cwd()))
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=30)
         out = r.stdout.strip()
-        return out[:20000] if out else "No matches found"
+        if not use_rg and output_mode == "count":
+            # grep -c lists every file it read; ripgrep only those that match.
+            out = "\n".join(l for l in out.splitlines() if not l.endswith(":0"))
+        if out:
+            return out[:20000]
+        # Both tools exit 1 for "nothing matched" and 2+ for a real failure
+        # (bad regex, unreadable path, unsupported flag). Reporting the latter
+        # as "No matches found" tells the model the text isn't there.
+        if r.returncode > 1:
+            return f"Error: {cmd[0]} failed: {r.stderr.strip()[:500] or f'exit code {r.returncode}'}"
+        return "No matches found"
     except Exception as e:
         return f"Error: {e}"

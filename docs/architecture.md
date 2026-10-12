@@ -205,10 +205,23 @@ matters most for 32 K-context local models (Qwen 2.5/3, Mistral, Llama 3
 small variants) where a single big tool result can come close to the
 limit even after compaction. The per-model context window comes from
 `providers._MODEL_CONTEXT_LIMITS` (registry of known local models) or,
-for `custom/...` providers, a live `/v1/models` query that backfills
-`PROVIDERS["custom"]["context_limit"]` so subsequent `compaction.
-get_context_limit` calls see the real value instead of the stale 128 K
-default.
+for `custom/...` providers, a live `/v1/models` query
+(`providers._fetch_custom_model_limit`). That query is cached per
+`(base_url, model)`: callers pass the model either bare or as
+`custom/<id>`, so the lookup tries the string as given and then with a
+leading `custom/` removed — never `bare_model()`, which would also strip the
+vendor segment of an id like `Qwen/Qwen3-Coder`. An endpoint that answers
+without a limit for the model is remembered for the process, and a failed
+request for 30 seconds, so `/models` is not re-fetched before every model
+and tool call. It also backfills `PROVIDERS["custom"]["context_limit"]`
+with the smallest limit the endpoint reported, as the fallback for callers
+that have no `base_url`.
+
+The same window bounds each **tool result**
+(`tool_registry._effective_output_cap`): 2,000–7,000 characters, trimmed
+in the middle so the head and tail survive around a `[... N chars
+truncated ...]` marker. It receives `config`, so a user-set
+`context_window` and the custom endpoint's per-model limit both apply.
 
 **Auto-compact** (`compaction.maybe_compact`) is the *fourth* line — when
 the conversation history (not a single tool result) crosses 70 % of the
