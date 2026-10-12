@@ -227,7 +227,10 @@ def _effective_output_cap(config: Dict[str, Any], max_output: int) -> int:
     try:
         from cheetahclaws.compaction import get_context_limit
         model = config.get("model", "") if config else ""
-        declared_ctx = get_context_limit(model) or 32768
+        # Pass config so a user-set context_window and the custom endpoint's
+        # own per-model limit apply; without it a custom model falls back to
+        # the provider-wide default, which is unrelated to the model in use.
+        declared_ctx = get_context_limit(model, config) or 32768
         # Reserve 16K for system prompt + tool schemas + framing + headroom.
         # 0.5× for CJK-safety (1 char ≈ 1 token worst case).
         safe_ctx = min(declared_ctx, 30000)

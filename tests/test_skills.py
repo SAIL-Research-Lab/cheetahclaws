@@ -235,6 +235,145 @@ def test_substitute_no_placeholders():
 
 
 # ------------------------------------------------------------------
+# Skill tool: non-string params from weak models (issue #182)
+# ------------------------------------------------------------------
+
+from cheetahclaws.skill.tools import _coerce_args, _skill_tool
+
+
+@pytest.mark.parametrize("raw, expected", [
+    ("v1.2 prod", "v1.2 prod"),
+    (None, ""),
+    ({"args": "--k 5"}, "--k 5"),
+    ({"value": "--k 5"}, "--k 5"),
+    (["--k", "5"], "--k 5"),
+    ([], ""),
+    (5, "5"),
+])
+def test_coerce_args_accepts(raw, expected):
+    assert _coerce_args(raw) == expected
+
+
+@pytest.mark.parametrize("raw", [
+    {"a": "x", "b": "y"},
+    {"args": {"args": "x"}},
+    {},
+    ["x", 1],
+    True,
+])
+def test_coerce_args_rejects(raw):
+    assert _coerce_args(raw) is None
+
+
+@pytest.fixture()
+def captured_skill_run(skill_dir, monkeypatch):
+    """Add the $ARGUMENTS skill and capture the prompt handed to the agent."""
+    from cheetahclaws import agent as _agent
+    (skill_dir / "deploy.md").write_text(ARGS_MD, encoding="utf-8")
+    messages: list[str] = []
+
+    def fake_run(message, state, config, system_prompt):
+        messages.append(message)
+        return iter(())
+
+    monkeypatch.setattr(_agent, "run", fake_run)
+    return messages
+
+
+def test_skill_tool_object_args_are_unwrapped(captured_skill_run):
+    result = _skill_tool({"name": "deploy", "args": {"args": "prod 1.0"}}, {})
+    assert not result.startswith("Error")
+    assert "Full args: prod 1.0" in captured_skill_run[0]
+
+
+def test_skill_tool_null_args(captured_skill_run):
+    result = _skill_tool({"name": "deploy", "args": None}, {})
+    assert not result.startswith("Error")
+    assert "Full args: " in captured_skill_run[0]
+
+
+def test_skill_tool_bad_args_names_expected_shape(captured_skill_run):
+    result = _skill_tool({"name": "deploy", "args": {"a": "x", "b": "y"}}, {})
+    assert result.startswith('Error: Skill "args" must be a string (got object)')
+    assert "Example:" in result
+    assert captured_skill_run == []
+
+
+def test_skill_tool_bad_name_names_expected_shape(captured_skill_run):
+    result = _skill_tool({"name": {"name": "deploy"}}, {})
+    assert result.startswith('Error: Skill "name" must be a string (got object)')
+    assert captured_skill_run == []
+
+
+# ------------------------------------------------------------------
+# Skill tool: what the sub-run hands back to the parent (issue #184)
+# ------------------------------------------------------------------
+
+def _chunk_types():
+    # Resolved per test, not at import: other test modules reload
+    # cheetahclaws.providers, and _skill_tool matches on the current classes.
+    import cheetahclaws.providers as _providers
+    return _providers.TextChunk, _providers.ThinkingChunk
+
+
+def _fake_sub_run(monkeypatch, events, messages):
+    """Make agent.run yield `events` and leave `messages` in the sub-state."""
+    from cheetahclaws import agent as _agent
+
+    def fake_run(message, state, config, system_prompt):
+        for event in events:
+            yield event
+        state.messages.extend(messages)
+
+    monkeypatch.setattr(_agent, "run", fake_run)
+
+
+def test_skill_tool_returns_only_final_answer(skill_dir, monkeypatch):
+    TextChunk, ThinkingChunk = _chunk_types()
+    _fake_sub_run(
+        monkeypatch,
+        events=[
+            ThinkingChunk("private reasoning"),
+            TextChunk("Let me check the corpus first."),
+            TextChunk("\n[Retry 1/3 after 2s — timeout]\n"),
+            ThinkingChunk("more reasoning"),
+            TextChunk("The answer is 42."),
+        ],
+        messages=[
+            {"role": "user", "content": "[Skill: commit]"},
+            {"role": "assistant", "content": "Let me check the corpus first.",
+             "tool_calls": [{"id": "1", "name": "Bash", "input": {}}]},
+            {"role": "tool", "content": "..."},
+            {"role": "assistant", "content": "The answer is 42.", "tool_calls": []},
+        ],
+    )
+
+    assert _skill_tool({"name": "commit"}, {}) == "The answer is 42."
+
+
+def test_skill_tool_falls_back_to_streamed_text_without_reasoning(skill_dir, monkeypatch):
+    """A run that fails before finishing a turn leaves no assistant message."""
+    TextChunk, ThinkingChunk = _chunk_types()
+    _fake_sub_run(
+        monkeypatch,
+        events=[
+            ThinkingChunk("private reasoning"),
+            TextChunk("\n[Failed — APIError: boom.]\n"),
+        ],
+        messages=[{"role": "user", "content": "[Skill: commit]"}],
+    )
+
+    assert _skill_tool({"name": "commit"}, {}) == "[Failed — APIError: boom.]"
+
+
+def test_skill_tool_no_output_placeholder(skill_dir, monkeypatch):
+    TextChunk, ThinkingChunk = _chunk_types()
+    _fake_sub_run(monkeypatch, events=[ThinkingChunk("only reasoning")], messages=[])
+
+    assert _skill_tool({"name": "commit"}, {}) == "(skill completed with no text output)"
+
+
+# ------------------------------------------------------------------
 # _iter_skill_files (nested directory support)
 # ------------------------------------------------------------------
 
