@@ -179,7 +179,19 @@ everything after it is sent verbatim as the model ID. That can be a catalog
 policy ID with no vendor prefix (`GET /v1/models/managed`), which is a
 Requesty maintained routing chain across several upstream providers for one
 model. Managed policy IDs ending in `@eu` only route through EU providers.
-Cost tracking uses the same per-model table as direct calls.
+
+> **Cost tracking:** as with OpenRouter, `/cost` and the `/quota` budget price
+> Requesty usage from the same per-model table as direct calls. Several IDs in
+> the `/model` picker (`gpt-5.4`, `gemini-3.5-flash`, `kimi-k3`, `glm-5.3`,
+> `qwen3.8-max`) have no price entry yet, so they record tokens but estimate
+> $0 — set a **token** budget rather than a dollar one for those.
+>
+> **Context window:** a catalog path with a vendor CheetahClaws knows
+> (`requesty/anthropic/...`) uses that vendor's window. A managed policy ID has
+> no vendor segment, so it uses the gateway default of 128k unless the model is
+> in the built-in registry; that is conservative (compaction starts earlier
+> than it has to). Raise it with `/config context_window=<N>` if you want the
+> model's full window.
 
 ### LiteLLM (AWS Bedrock / Azure / Vertex AI)
 

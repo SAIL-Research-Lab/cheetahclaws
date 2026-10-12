@@ -59,7 +59,7 @@ Type `/` and press **Tab** to see all commands with descriptions. Continue typin
 | `/model <name>` | Switch model (takes effect immediately). Type `/model ` and press **Tab** for a `provider/model` completion picker — one default per provider + a two-level `litellm/<backend>/<model>` tree (PR #166). Gateways keep their upstream path, so only the first segment is the provider: `openrouter/deepseek/deepseek-v4-flash`, optionally `@<provider>[/<quant>]` to pin the upstream (PR #179) |
 | `/config` | Show all current config values |
 | `/config key=value` | Set a config value (persisted to disk). v3.5.78+ parses JSON values: `["a","b"]`, `{"k":"v"}`, signed numbers, quoted strings — list/dict configs no longer get silently saved as literal strings. |
-| `/config context_window=<N>` | Override the context window (tokens) for the session. `0` = use the model's default. Drives the prompt `%` indicator, `/context`, the compaction trigger, **and** the per-call output-token cap — all consistently. Distinct from `max_tokens` (which is the **output** cap, not the window). Bidirectional: a smaller value forces earlier compaction; a larger value corrects a stale default. Read live, so it takes effect on the next prompt (no restart). Warns if set above the model's real window (that would disable compaction and the API may reject oversized prompts). |
+| `/config context_window=<N>` | Override the context window (tokens) for the session. `0` = use the model's default. Drives the prompt `%` indicator, `/context`, the compaction trigger, the per-call output-token cap, **and** the size cap on each tool result (2,000–7,000 characters, smaller for smaller windows) — all consistently. Distinct from `max_tokens` (which is the **output** cap, not the window). Bidirectional: a smaller value forces earlier compaction; a larger value corrects a stale default. Read live, so it takes effect on the next prompt (no restart). Warns if set above the model's real window (that would disable compaction and the API may reject oversized prompts). |
 | `/config input_suggest=<bool>` | Turn the [next-prompt ghost text](#next-prompt-ghost-text) on/off (default `true`). When on, the auxiliary model drafts your likely next message after each turn and shows it dim at the prompt; **Tab** accepts it. `CHEETAH_SUGGEST=0` disables it for a single run without touching the saved config. |
 | `/config markdown_rules=true` | Render a Markdown `---` separator as a full-width horizontal rule. **Off by default** — models use `---` freely between sections, and since the tool summary prints at every round-trip the rule lands mid-turn, reading like the app drew a divider. Stripping is position-aware: setext `---` headings, `\| --- \|` table rows, `- item` lists and `---` inside a code fence are left alone |
 | `/config stream_mode=<mode>` | Force the Markdown streaming tier: `live` (full in-place Rich redraw), `commit` (append-only progressive Markdown — safe over SSH / Apple Terminal / pipes), or `plain` (raw tokens). Unset = auto-detected per device (`ui.render.auto_stream_mode`). Legacy `/config rich_live=true\|false` still works (`true`→`live`, `false`→`commit`). |
@@ -517,7 +517,7 @@ records which one-time migrations have already run.
 | `Edit` | Exact string replacement (shows diff) | `file_path`, `old_string`, `new_string`, `replace_all` |
 | `Bash` | Execute shell command | `command`, `timeout` (default 30s) |
 | `Glob` | Find files by glob pattern | `pattern` (e.g. `**/*.py`), `path` |
-| `Grep` | Regex search in files (uses ripgrep if available) | `pattern`, `path`, `glob`, `output_mode` |
+| `Grep` | Regex search in files (uses ripgrep if available, otherwise `grep -rE`) | `pattern`, `path`, `glob`, `output_mode` |
 | `WebFetch` | Fetch and extract text from URL | `url`, `prompt` |
 | `WebSearch` | Search the web via DuckDuckGo | `query` |
 
@@ -560,6 +560,19 @@ records which one-time migrations have already run.
 |---|---|---|
 | `Skill` | Invoke a skill by name from within the conversation | `name`, `args` |
 | `SkillList` | List all available skills with triggers and metadata | — |
+
+`Skill` runs the skill as a nested agent and returns **only that run's final
+answer** — not its reasoning, the narration before each tool call, or status
+lines such as `[Retry 1/3 …]`. If the nested run fails before finishing a turn,
+whatever text it streamed is returned instead, so the error is not lost. Write a
+skill so that its last message is the answer the caller needs.
+
+`args` is a single string (it replaces `$ARGUMENTS`). Models that ignore the
+schema are tolerated where the intent is unambiguous: `null` is treated as an
+empty string, an object with one string value (`{"args": "..."}`) is unwrapped,
+a list of strings is joined with spaces, and a number is converted. Anything
+else returns an error that names the expected shape (and, for an object, the
+keys that were sent) instead of failing the call with a Python exception.
 
 ### MCP Tools
 

@@ -93,6 +93,20 @@ In-app form (persists across launches):
 **Tip:** CheetahClaws queries `/v1/models` on first use to discover the model's real
 context window, so you don't need to hard-code `context_limit` in
 `providers.py` — `--max-model-len` on the server is the source of truth.
+The answer is cached for the process, per model: an endpoint that serves
+several models gives each one its own window, and the lookup costs one request
+rather than one per call.
+
+Not every server reports a limit. vLLM does (`max_model_len`); **llama-server
+and LiteLLM proxies do not**, and some endpoints have no `/v1/models` at all. In
+those cases CheetahClaws asks once, remembers that there was no answer (a failed
+request is retried after 30 seconds), and falls back to the provider default
+(128k, or the smallest limit the endpoint reported for another model). If
+your model's window is smaller than that, set it yourself:
+
+```
+/config context_window=32768
+```
 
 ### Alternative: cloud providers with non-trivial auth via the `litellm/` provider
 
