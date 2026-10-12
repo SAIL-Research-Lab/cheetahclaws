@@ -85,8 +85,13 @@ def _skill_tool(params: dict, config: dict) -> str:
     raw_args = params.get("args", "")
     args = _coerce_args(raw_args)
     if args is None:
+        got = _json_type(raw_args)
+        if isinstance(raw_args, dict) and raw_args:
+            # Name the keys: a model that sent {"corpus": …, "k": …} can see
+            # which of its own fields to fold into the one string.
+            got += f" with keys {sorted(map(str, raw_args))}"
         return (
-            f'Error: Skill "args" must be a string (got {_json_type(raw_args)}). '
+            f'Error: Skill "args" must be a string (got {got}). '
             f"{_USAGE_EXAMPLE}"
         )
 
