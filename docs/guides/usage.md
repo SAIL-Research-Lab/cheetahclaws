@@ -157,6 +157,30 @@ suffix if you would rather have OpenRouter reroute around an outage.
 > tokens but estimates $0 — set a **token** budget rather than a dollar one
 > if you rely on hard caps for exotic models.
 
+### Requesty (700+ models, one key)
+
+[Requesty](https://www.requesty.ai) is an LLM gateway with 700+ models behind
+one OpenAI-compatible endpoint (`https://router.requesty.ai/v1`). Get a key at
+[app.requesty.ai/api-keys](https://app.requesty.ai/api-keys); docs are at
+[docs.requesty.ai](https://docs.requesty.ai).
+
+```bash
+export REQUESTY_API_KEY=rqsty-...         # or: /config requesty_api_key=rqsty-...
+
+cheetahclaws --model requesty/openai/gpt-4o-mini
+cheetahclaws --model requesty/anthropic/claude-sonnet-4-6
+cheetahclaws --model requesty/claude-sonnet-4-6       # managed policy ID
+cheetahclaws --model requesty/gpt-5-mini@eu           # EU providers only
+```
+
+As with OpenRouter, the first segment (`requesty`) is the provider and
+everything after it is sent verbatim as the model ID. That can be a catalog
+`<vendor>/<model>` path (the full list is at `GET /v1/models`) or a managed
+policy ID with no vendor prefix (`GET /v1/models/managed`), which is a
+Requesty maintained routing chain across several upstream providers for one
+model. Managed policy IDs ending in `@eu` only route through EU providers.
+Cost tracking uses the same per-model table as direct calls.
+
 ### LiteLLM (AWS Bedrock / Azure / Vertex AI)
 
 Use the `litellm/` prefix when the upstream needs auth that's painful to

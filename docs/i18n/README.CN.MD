@@ -212,9 +212,12 @@ Claude Code 是一款强大的、生产级的 AI 编码助手 —— 但它的�
 | **DeepSeek** | `deepseek-chat` · `deepseek-reasoner` | 64k | `DEEPSEEK_API_KEY` |
 | **MiniMax** | `MiniMax-Text-01` · `MiniMax-VL-01` · `abab6.5s-chat` | 256k–1M | `MINIMAX_API_KEY` |
 | **OpenRouter** _(400+ 模型，一把 key)_ | `openrouter/deepseek/deepseek-v4-flash` · `openrouter/anthropic/claude-sonnet-4-6` · `openrouter/openai/gpt-5` | 视情况而定 | `OPENROUTER_API_KEY` |
+| **Requesty** _(700+ 模型，一把 key)_ | `requesty/openai/gpt-4o-mini` · `requesty/anthropic/claude-sonnet-4-6` · `requesty/claude-sonnet-4-6` | 视情况而定 | `REQUESTY_API_KEY` |
 | **AWS Bedrock / Azure / Vertex** _(通过 litellm)_ | `litellm/<provider>/<model>` | 视情况而定 | 特定于提供商 |
 
 > **`openrouter/` 网关：** 一把 key 覆盖跨厂商的 400+ 模型。模型 ID 保留 OpenRouter 上游的 `<vendor>/<model>` 路径，因此调用是双层前缀的：`openrouter/deepseek/deepseek-v4-flash`。若要指定由哪个上游提供商（及量化精度）来服务该请求，在模型后追加 `@<provider>[/<quantization>]` —— `openrouter/deepseek/deepseek-v4-flash@gmicloud/fp8` —— 它会作为 OpenRouter 的 `provider` 请求体对象发送，而不是拼进模型 ID。参见 [usage.md](../guides/usage.md#openrouter-400-models-one-key)。
+
+> **`requesty/` 网关：** 用法相同：`requesty/` 之后的全部内容作为模型 ID 发送，可以是目录中的 `<vendor>/<model>` 路径（`requesty/openai/gpt-4o-mini`），也可以是托管策略 ID（`requesty/claude-sonnet-4-6`）。以 `@eu` 结尾的托管策略 ID（`requesty/gpt-5-mini@eu`）只经由欧盟提供商路由。参见 [usage.md](../guides/usage.md#requesty-700-models-one-key)。
 
 > **`litellm/` 适配器：** 在单一 SDK 后路由到 100+ 提供商 —— 主要用于认证方式较棘手的上游（Bedrock SigV4、Azure 部署路由、Vertex 服务账号 JWT）。对于普通的 OpenAI 形态端点，优先使用零依赖的 `custom/` 适配器。用 `pip install ".[litellm]"` 安装。参见 [recipes.md](../guides/recipes.md#alternative-cloud-providers-with-non-trivial-auth-via-the-litellm-provider)。
 

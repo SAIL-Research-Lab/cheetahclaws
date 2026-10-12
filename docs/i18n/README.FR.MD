@@ -209,9 +209,12 @@ Claude Code est un assistant de codage IA puissant et de qualité production —
 | **DeepSeek** | `deepseek-chat` · `deepseek-reasoner` | 64k | `DEEPSEEK_API_KEY` |
 | **MiniMax** | `MiniMax-Text-01` · `MiniMax-VL-01` · `abab6.5s-chat` | 256k–1M | `MINIMAX_API_KEY` |
 | **OpenRouter** _(400+ modèles, une seule clé)_ | `openrouter/deepseek/deepseek-v4-flash` · `openrouter/anthropic/claude-sonnet-4-6` · `openrouter/openai/gpt-5` | variable | `OPENROUTER_API_KEY` |
+| **Requesty** _(700+ modèles, une seule clé)_ | `requesty/openai/gpt-4o-mini` · `requesty/anthropic/claude-sonnet-4-6` · `requesty/claude-sonnet-4-6` | variable | `REQUESTY_API_KEY` |
 | **AWS Bedrock / Azure / Vertex** _(via litellm)_ | `litellm/<provider>/<model>` | variable | spécifique au fournisseur |
 
 > **Passerelle `openrouter/` :** une seule clé pour plus de 400 modèles, tous fournisseurs confondus. L'ID du modèle conserve le chemin upstream `<vendor>/<model>` d'OpenRouter, l'appel porte donc un double préfixe : `openrouter/deepseek/deepseek-v4-flash`. Pour imposer le fournisseur upstream (et la quantification) qui traite la requête, ajoutez `@<provider>[/<quantization>]` — `openrouter/deepseek/deepseek-v4-flash@gmicloud/fp8` — envoyé comme objet `provider` dans le corps de la requête plutôt que collé à l'ID du modèle. Voir [usage.md](../guides/usage.md#openrouter-400-models-one-key).
+
+> **Passerelle `requesty/` :** même principe : tout ce qui suit `requesty/` est envoyé comme ID du modèle, soit un chemin de catalogue `<vendor>/<model>` (`requesty/openai/gpt-4o-mini`), soit un ID de politique gérée (`requesty/claude-sonnet-4-6`). Les ID de politique gérée terminés par `@eu` (`requesty/gpt-5-mini@eu`) ne passent que par des fournisseurs situés dans l'UE. Voir [usage.md](../guides/usage.md#requesty-700-models-one-key).
 
 > **Adaptateur `litellm/` :** achemine vers 100+ fournisseurs derrière un seul SDK — principalement pour les upstreams à l'authentification délicate (SigV4 de Bedrock, routage de déploiement Azure, JWT de compte de service Vertex). Pour les points de terminaison standard au format OpenAI, préférez l'adaptateur `custom/` sans dépendance. Installez avec `pip install ".[litellm]"`. Voir [recipes.md](../guides/recipes.md#alternative-cloud-providers-with-non-trivial-auth-via-the-litellm-provider).
 

@@ -209,9 +209,12 @@ Claude Code は強力で本番グレードの AI コーディングアシスタ�
 | **DeepSeek** | `deepseek-chat` · `deepseek-reasoner` | 64k | `DEEPSEEK_API_KEY` |
 | **MiniMax** | `MiniMax-Text-01` · `MiniMax-VL-01` · `abab6.5s-chat` | 256k–1M | `MINIMAX_API_KEY` |
 | **OpenRouter** _(400+ モデル、キー1つ)_ | `openrouter/deepseek/deepseek-v4-flash` · `openrouter/anthropic/claude-sonnet-4-6` · `openrouter/openai/gpt-5` | 様々 | `OPENROUTER_API_KEY` |
+| **Requesty** _(700+ モデル、キー1つ)_ | `requesty/openai/gpt-4o-mini` · `requesty/anthropic/claude-sonnet-4-6` · `requesty/claude-sonnet-4-6` | 様々 | `REQUESTY_API_KEY` |
 | **AWS Bedrock / Azure / Vertex** _(litellm 経由)_ | `litellm/<provider>/<model>` | 様々 | プロバイダー固有 |
 
 > **`openrouter/` ゲートウェイ:** 1つのキーでベンダーをまたぐ400以上のモデルにアクセスできます。モデル ID は OpenRouter のアップストリーム `<vendor>/<model>` パスをそのまま保持するため、呼び出しは二重プレフィックスになります: `openrouter/deepseek/deepseek-v4-flash`。どのアップストリームプロバイダー（および量子化）がリクエストを処理するかを固定するには、`@<provider>[/<quantization>]` を付加します — `openrouter/deepseek/deepseek-v4-flash@gmicloud/fp8` — これはモデル ID に連結されるのではなく、OpenRouter の `provider` リクエストボディオブジェクトとして送信されます。[usage.md](../guides/usage.md#openrouter-400-models-one-key) を参照。
+
+> **`requesty/` ゲートウェイ:** 使い方は同じです。`requesty/` 以降はすべてモデル ID として送信されます。カタログの `<vendor>/<model>` パス（`requesty/openai/gpt-4o-mini`）でも、マネージドポリシー ID（`requesty/claude-sonnet-4-6`）でも構いません。`@eu` で終わるマネージドポリシー ID（`requesty/gpt-5-mini@eu`）は EU のプロバイダーのみを経由します。[usage.md](../guides/usage.md#requesty-700-models-one-key) を参照してください。
 
 > **`litellm/` アダプター:** 1つの SDK の背後で100以上のプロバイダーにルーティングします — 主に扱いにくい認証を持つアップストリーム（Bedrock SigV4、Azure のデプロイメントルーティング、Vertex のサービスアカウント JWT）向けです。素の OpenAI 形式のエンドポイントには、依存関係ゼロの `custom/` アダプターを推奨します。`pip install ".[litellm]"` でインストールしてください。[recipes.md](../guides/recipes.md#alternative-cloud-providers-with-non-trivial-auth-via-the-litellm-provider) を参照。
 
