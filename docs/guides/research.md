@@ -75,6 +75,7 @@ No configuration required — 13 of 20 sources work out of the box.
 | **微博 Weibo** | social, news | `WEIBO_COOKIE` | Paste `SUB; SUBP` from m.weibo.cn after logging in; the mobile API returns `ok: -100` anonymously |
 | **小红书 Xiaohongshu** | social, news | `XHS_COOKIE` (+ sometimes `XHS_X_S`) | Xiaohongshu uses signed requests — cookie must come from an active browser session; anti-bot is aggressive and cookies may expire hourly. Alternative: use `--sources tavily` with `<query> site:xiaohongshu.com` |
 | **Google Scholar** | academic | `pip install scholarly` | No official API; `scholarly` scrapes HTML — brittle (~5-20s per query, CAPTCHA-prone). Set `SKIP_GOOGLE_SCHOLAR=1` to force-disable even when installed. |
+| **Serply Scholar** | academic | `SERPLY_API_KEY` | Google Scholar through the Serply API: Scholar's citation counts without scraping, ~1-2s per query. Free trial credits at serply.io |
 
 You can also optionally set:
 
@@ -141,6 +142,7 @@ can honor a date filter translates it to its native syntax:
 | Brave | `freshness=pd\|pw\|pm\|py` (best match to range duration) |
 | Twitter / X | `start_time=ISO&end_time=ISO` params |
 | Google Scholar | Client-side filter on year |
+| Serply Scholar | `as_ylo=YYYY&as_yhi=YYYY` (Scholar's year filter) |
 | Polymarket | (ignored — polymarket only returns active markets) |
 | Zhihu | (ignored — no native date filter in v4 search) |
 

@@ -28,6 +28,7 @@ _CALIBRATION: dict[str, float] = {
     "semantic_scholar":  100.0,
     "arxiv":             1.0,       # no signal → flat 0.5, recency does the work
     "openalex":          100.0,
+    "serply_scholar":    100.0,
     "google_news":       1.0,
     "polymarket":        10000.0,   # USD volume
     "sec_edgar":         1.0,

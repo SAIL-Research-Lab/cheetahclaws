@@ -93,3 +93,4 @@ from . import google_scholar as _gs               # noqa: E402, F401
 from . import bilibili as _bili                   # noqa: E402, F401
 from . import weibo as _wb                        # noqa: E402, F401
 from . import xiaohongshu as _xhs                 # noqa: E402, F401
+from . import serply_scholar as _sps              # noqa: E402, F401
