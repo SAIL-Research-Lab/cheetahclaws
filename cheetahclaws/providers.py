@@ -11,6 +11,7 @@ Supported providers:
   deepseek   — DeepSeek (deepseek-v4-flash, deepseek-v4-pro, deepseek-chat, deepseek-reasoner)
   openrouter — OpenRouter (openrouter/deepseek/deepseek-v4-flash, ...)
   requesty   — Requesty (requesty/openai/gpt-4o-mini, requesty/claude-sonnet-4-6, ...)
+  cheaperinference — Cheaper Inference (cheaperinference/gpt-5.4-mini, cheaperinference/claude-sonnet-5, ...)
   minimax    — MiniMax (MiniMax-Text-01, abab6.5s-chat, ...)
   ollama     — Local Ollama (llama3.3, qwen2.5-coder, ...)
   lmstudio   — Local LM Studio (any loaded model)
@@ -23,8 +24,8 @@ Model string formats:
   "custom/my-model"          uses CUSTOM_BASE_URL from config
   "openrouter/<vendor>/<model>"  multi-level path: the first segment is the
   provider, everything after it is passed through as the upstream model ID
-  (e.g. "openrouter/deepseek/deepseek-v4-flash"). Also used by nim/, requesty/
-  and litellm/.
+  (e.g. "openrouter/deepseek/deepseek-v4-flash"). Also used by nim/, requesty/,
+  cheaperinference/ and litellm/.
   "openrouter/<vendor>/<model>@<provider>[/<quant>]"  optional routing suffix:
   pins the secondary OpenRouter provider (and quantization level) via the
   `provider` request body, keeping the model field a real model ID.
@@ -169,6 +170,28 @@ PROVIDERS: dict[str, dict] = {
             "qwen3.8-max",
             "openai/gpt-4o-mini",
             "anthropic/claude-sonnet-4-6",
+        ],
+    },
+    # Cheaper Inference: OpenAI-compatible LLM gateway. One key gives access
+    # to models from several labs. Get a key at https://cheaperinference.com/signup.
+    # Like OpenRouter, the first segment is the provider and everything after
+    # cheaperinference/ is sent verbatim as the model ID:
+    #   /model cheaperinference/gpt-5.4-mini
+    #   /model cheaperinference/claude-sonnet-5
+    "cheaperinference": {
+        "type":       "openai",
+        "api_key_env": "CHEAPERINFERENCE_API_KEY",
+        "base_url":   "https://api.cheaperinference.com/v1",
+        "context_limit": 128000,
+        "max_completion_tokens": 16384,
+        "models": [
+            "gpt-5.4-mini",
+            "gpt-5.4",
+            "claude-sonnet-5",
+            "claude-opus-5.5",
+            "deepseek-v4-flash",
+            "glm-5.3",
+            "gemini-3.1-pro-preview",
         ],
     },
     "minimax": {

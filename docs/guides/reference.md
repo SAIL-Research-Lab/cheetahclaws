@@ -333,6 +333,7 @@ export ZHIPU_API_KEY=...             # Zhipu GLM
 export DEEPSEEK_API_KEY=sk-...       # DeepSeek
 export MINIMAX_API_KEY=...           # MiniMax
 export OPENROUTER_API_KEY=sk-or-...  # OpenRouter (400+ models, one key)
+export CHEAPERINFERENCE_API_KEY=ci_live_...  # Cheaper Inference (one key for several labs)
 export REQUESTY_API_KEY=rqsty-...    # Requesty (700+ models, one key)
 ```
 
@@ -371,6 +372,7 @@ The env var always wins over any persisted value in `~/.cheetahclaws/config.json
 /config deepseek_api_key=sk-...
 /config minimax_api_key=...
 /config openrouter_api_key=sk-or-...
+/config cheaperinference_api_key=ci_live_...
 /config requesty_api_key=rqsty-...
 ```
 
@@ -400,7 +402,8 @@ Keys are saved to `~/.cheetahclaws/config.json` and loaded automatically on next
   "deepseek_api_key": "sk-...",
   "minimax_api_key": "...",
   "openrouter_api_key": "sk-or-...",
-  "requesty_api_key": "rqsty-..."
+  "requesty_api_key": "rqsty-...",
+  "cheaperinference_api_key": "ci_live_..."
 }
 ```
 

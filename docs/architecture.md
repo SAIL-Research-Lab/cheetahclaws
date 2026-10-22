@@ -321,6 +321,7 @@ based on the model string:
 "custom/my-endpoint"              → custom
 "nim/meta/llama-3.3-70b-instruct" → nim     (build.nvidia.com free tier)
 "openrouter/deepseek/deepseek-v4-flash" → openrouter  (400+ models, one key)
+"cheaperinference/gpt-5.4-mini"         → cheaperinference (one key, several labs)
 "requesty/openai/gpt-4o-mini"           → requesty    (700+ models, one key)
 ```
 
@@ -329,7 +330,7 @@ is the one entry point agent.py uses.  Internally it dispatches to
 `stream_anthropic()` (native SDK) or `stream_openai_compat()` (used by
 every OpenAI-compatible provider).
 
-**Gateway model IDs are multi-level.** OpenRouter, Requesty, NIM and LiteLLM
+**Gateway model IDs are multi-level.** OpenRouter, Requesty, Cheaper Inference, NIM and LiteLLM
 address models by an upstream `<vendor>/<model>` path, so only the first
 segment is the provider and `bare_model()` deliberately strips just that
 one.  Two consequences the rest of the file relies on:
