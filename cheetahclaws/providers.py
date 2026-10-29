@@ -11,6 +11,7 @@ Supported providers:
   deepseek   — DeepSeek (deepseek-v4-flash, deepseek-v4-pro, deepseek-chat, deepseek-reasoner)
   openrouter — OpenRouter (openrouter/deepseek/deepseek-v4-flash, ...)
   requesty   — Requesty (requesty/openai/gpt-4o-mini, requesty/claude-sonnet-4-6, ...)
+  runcrate   — Runcrate (runcrate/deepseek-ai/DeepSeek-V4.1-Flash, runcrate/zai-org/GLM-5.3, ...)
   minimax    — MiniMax (MiniMax-Text-01, abab6.5s-chat, ...)
   ollama     — Local Ollama (llama3.3, qwen2.5-coder, ...)
   lmstudio   — Local LM Studio (any loaded model)
@@ -23,8 +24,8 @@ Model string formats:
   "custom/my-model"          uses CUSTOM_BASE_URL from config
   "openrouter/<vendor>/<model>"  multi-level path: the first segment is the
   provider, everything after it is passed through as the upstream model ID
-  (e.g. "openrouter/deepseek/deepseek-v4-flash"). Also used by nim/, requesty/
-  and litellm/.
+  (e.g. "openrouter/deepseek/deepseek-v4-flash"). Also used by nim/, requesty/,
+  runcrate/ and litellm/.
   "openrouter/<vendor>/<model>@<provider>[/<quant>]"  optional routing suffix:
   pins the secondary OpenRouter provider (and quantization level) via the
   `provider` request body, keeping the model field a real model ID.
@@ -169,6 +170,26 @@ PROVIDERS: dict[str, dict] = {
             "qwen3.8-max",
             "openai/gpt-4o-mini",
             "anthropic/claude-sonnet-4-6",
+        ],
+    },
+    # Runcrate: open models behind one OpenAI-compatible endpoint. Get a key at
+    # https://www.runcrate.ai/dashboard/api-keys. Model IDs are <vendor>/<model>
+    # paths (full list at GET https://api.runcrate.ai/v1/models), passed through
+    # verbatim after the first segment:
+    #   /model runcrate/deepseek-ai/DeepSeek-V4.1-Flash
+    "runcrate": {
+        "type":       "openai",
+        "api_key_env": "RUNCRATE_API_KEY",
+        "base_url":   "https://api.runcrate.ai/v1",
+        "context_limit": 128000,
+        "max_completion_tokens": 16384,
+        "models": [
+            "deepseek-ai/DeepSeek-V4.1-Flash",
+            "zai-org/GLM-5.3",
+            "zai-org/GLM-5.3-Flash",
+            "Qwen/Qwen3.8-Flash",
+            "moonshotai/Kimi-K2.6",
+            "openai/gpt-oss-120b",
         ],
     },
     "minimax": {

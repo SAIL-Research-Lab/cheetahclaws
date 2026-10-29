@@ -193,6 +193,28 @@ model. Managed policy IDs ending in `@eu` only route through EU providers.
 > than it has to). Raise it with `/config context_window=<N>` if you want the
 > model's full window.
 
+### Runcrate (open models, one key)
+
+[Runcrate](https://www.runcrate.ai) serves open models behind one
+OpenAI-compatible endpoint (`https://api.runcrate.ai/v1`). Get a key at
+[runcrate.ai/dashboard/api-keys](https://www.runcrate.ai/dashboard/api-keys);
+the model list with context windows and prices is public at
+`GET https://api.runcrate.ai/v1/models`.
+
+```bash
+export RUNCRATE_API_KEY=rc_live_...       # or: /config runcrate_api_key=rc_live_...
+
+cheetahclaws --model runcrate/deepseek-ai/DeepSeek-V4.1-Flash
+cheetahclaws --model runcrate/zai-org/GLM-5.3
+cheetahclaws --model runcrate/moonshotai/Kimi-K2.6
+```
+
+As with OpenRouter, the first segment (`runcrate`) is the provider and
+everything after it is sent verbatim as the `<vendor>/<model>` model ID. These
+IDs have no price entry, so `/cost` records tokens but estimates $0, and the
+context window is the gateway default of 128k (raise it with
+`/config context_window=<N>`).
+
 ### LiteLLM (AWS Bedrock / Azure / Vertex AI)
 
 Use the `litellm/` prefix when the upstream needs auth that's painful to

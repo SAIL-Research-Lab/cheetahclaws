@@ -334,6 +334,7 @@ export DEEPSEEK_API_KEY=sk-...       # DeepSeek
 export MINIMAX_API_KEY=...           # MiniMax
 export OPENROUTER_API_KEY=sk-or-...  # OpenRouter (400+ models, one key)
 export REQUESTY_API_KEY=rqsty-...    # Requesty (700+ models, one key)
+export RUNCRATE_API_KEY=rc_live_...  # Runcrate (open models, one key)
 ```
 
 #### `.env` file (loaded automatically)
@@ -372,6 +373,7 @@ The env var always wins over any persisted value in `~/.cheetahclaws/config.json
 /config minimax_api_key=...
 /config openrouter_api_key=sk-or-...
 /config requesty_api_key=rqsty-...
+/config runcrate_api_key=rc_live_...
 ```
 
 Keys are saved to `~/.cheetahclaws/config.json` and loaded automatically on next launch.
@@ -400,7 +402,8 @@ Keys are saved to `~/.cheetahclaws/config.json` and loaded automatically on next
   "deepseek_api_key": "sk-...",
   "minimax_api_key": "...",
   "openrouter_api_key": "sk-or-...",
-  "requesty_api_key": "rqsty-..."
+  "requesty_api_key": "rqsty-...",
+  "runcrate_api_key": "rc_live_..."
 }
 ```
 

@@ -210,6 +210,7 @@ Claude Code는 강력한 프로덕션 등급 AI 코딩 어시스턴트입니다 
 | **MiniMax** | `MiniMax-Text-01` · `MiniMax-VL-01` · `abab6.5s-chat` | 256k–1M | `MINIMAX_API_KEY` |
 | **OpenRouter** _(400+ 모델, 키 하나)_ | `openrouter/deepseek/deepseek-v4-flash` · `openrouter/anthropic/claude-sonnet-4-6` · `openrouter/openai/gpt-5` | 다양 | `OPENROUTER_API_KEY` |
 | **Requesty** _(700+ 모델, 키 하나)_ | `requesty/openai/gpt-4o-mini` · `requesty/anthropic/claude-sonnet-4-6` · `requesty/claude-sonnet-4-6` | 다양 | `REQUESTY_API_KEY` |
+| **Runcrate** | `runcrate/deepseek-ai/DeepSeek-V4.1-Flash` · `runcrate/zai-org/GLM-5.3` · `runcrate/moonshotai/Kimi-K2.6` | 다양 | `RUNCRATE_API_KEY` |
 | **AWS Bedrock / Azure / Vertex** _(litellm 경유)_ | `litellm/<provider>/<model>` | 다양 | 프로바이더별 상이 |
 
 > **`openrouter/` 게이트웨이:** 키 하나로 여러 벤더의 400개 이상 모델을 사용합니다. 모델 ID는 OpenRouter의 업스트림 `<vendor>/<model>` 경로를 그대로 유지하므로 호출은 접두사가 두 겹입니다: `openrouter/deepseek/deepseek-v4-flash`. 어떤 업스트림 프로바이더(및 양자화)가 요청을 처리할지 고정하려면 `@<provider>[/<quantization>]`를 덧붙이세요 — `openrouter/deepseek/deepseek-v4-flash@gmicloud/fp8` — 이는 모델 ID에 붙는 대신 OpenRouter의 `provider` 요청 본문 객체로 전송됩니다. [usage.md](../guides/usage.md#openrouter-400-models-one-key) 참고.

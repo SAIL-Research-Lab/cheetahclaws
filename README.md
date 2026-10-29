@@ -169,7 +169,7 @@ Claude Code is a powerful, production-grade AI coding assistant — but its sour
 
 | Feature | Details |
 |---|---|
-| Multi-provider | Anthropic · OpenAI · Gemini · Kimi · Qwen · Zhipu · DeepSeek · MiniMax · OpenRouter · Requesty · Ollama · LM Studio · Custom endpoint |
+| Multi-provider | Anthropic · OpenAI · Gemini · Kimi · Qwen · Zhipu · DeepSeek · MiniMax · OpenRouter · Requesty · Runcrate · Ollama · LM Studio · Custom endpoint |
 | Agent loop | Streaming API + automatic tool-use loop; the whole loop is in `agent.py` |
 | 28 built-in tools | Read · Write · Edit · Bash · Glob · Grep · WebFetch · WebSearch · NotebookEdit · GetDiagnostics · Memory* · Agent/SendMessage · Skill · AskUserQuestion · Task* · SleepTimer · EnterPlanMode/ExitPlanMode · *(MCP + plugin tools auto-added)* |
 | Tool profiles | `tool_profile` trims the tool surface sent each turn to save prompt tokens: `full` (default, everything) · `standard` (compact coding) · `research` (web + documents) · `orchestration` (agents + tasks). Set with `/config tool_profile=standard`. [Guide](docs/guides/usage.md#tool-profiles-tool_profile) |
@@ -214,6 +214,7 @@ Claude Code is a powerful, production-grade AI coding assistant — but its sour
 | **MiniMax** | `MiniMax-Text-01` · `MiniMax-VL-01` · `abab6.5s-chat` | 256k–1M | `MINIMAX_API_KEY` |
 | **OpenRouter** _(400+ models, one key)_ | `openrouter/deepseek/deepseek-v4-flash` · `openrouter/anthropic/claude-sonnet-4-6` · `openrouter/openai/gpt-5` | varies | `OPENROUTER_API_KEY` |
 | **Requesty** _(700+ models, one key)_ | `requesty/openai/gpt-4o-mini` · `requesty/anthropic/claude-sonnet-4-6` · `requesty/claude-sonnet-4-6` | varies | `REQUESTY_API_KEY` |
+| **Runcrate** _(open models, one key)_ | `runcrate/deepseek-ai/DeepSeek-V4.1-Flash` · `runcrate/zai-org/GLM-5.3` · `runcrate/moonshotai/Kimi-K2.6` | varies | `RUNCRATE_API_KEY` |
 | **AWS Bedrock / Azure / Vertex** _(via litellm)_ | `litellm/<provider>/<model>` | varies | provider-specific |
 
 > **`openrouter/` gateway:** one key for 400+ models across vendors. The model ID keeps OpenRouter's upstream `<vendor>/<model>` path, so the call is double-prefixed: `openrouter/deepseek/deepseek-v4-flash`. To pin which upstream provider (and quantization) serves the request, append `@<provider>[/<quantization>]` — `openrouter/deepseek/deepseek-v4-flash@gmicloud/fp8` — which is sent as OpenRouter's `provider` request-body object rather than glued into the model ID. See [usage.md](docs/guides/usage.md#openrouter-400-models-one-key).
@@ -315,7 +316,7 @@ cheetahclaws --model gpt-4o             # pick any model
 cheetahclaws --model deepseek-chat --thinking --verbose
 ```
 
-Provider get-key pages: [Anthropic](https://console.anthropic.com) · [OpenAI](https://platform.openai.com) · [Gemini](https://aistudio.google.com) · [Kimi](https://platform.moonshot.cn) · [Qwen](https://dashscope.aliyun.com) · [Zhipu](https://open.bigmodel.cn) · [DeepSeek](https://platform.deepseek.com) · [MiniMax](https://platform.minimaxi.chat) · [OpenRouter](https://openrouter.ai/keys) · [Requesty](https://app.requesty.ai/api-keys).
+Provider get-key pages: [Anthropic](https://console.anthropic.com) · [OpenAI](https://platform.openai.com) · [Gemini](https://aistudio.google.com) · [Kimi](https://platform.moonshot.cn) · [Qwen](https://dashscope.aliyun.com) · [Zhipu](https://open.bigmodel.cn) · [DeepSeek](https://platform.deepseek.com) · [MiniMax](https://platform.minimaxi.chat) · [OpenRouter](https://openrouter.ai/keys) · [Requesty](https://app.requesty.ai/api-keys) · [Runcrate](https://www.runcrate.ai/dashboard/api-keys).
 
 **One key for 400+ models** — [OpenRouter](https://openrouter.ai) fronts every major vendor behind one OpenAI-compatible endpoint, so a single key covers Claude, GPT, Gemini, DeepSeek, Llama, Qwen and the rest:
 
@@ -332,6 +333,13 @@ cheetahclaws --model openrouter/deepseek/deepseek-v4-flash@gmicloud/fp8   # pin 
 export REQUESTY_API_KEY=rqsty-...
 cheetahclaws --model requesty/openai/gpt-4o-mini
 cheetahclaws --model requesty/claude-sonnet-4-6       # managed policy ID
+```
+
+[Runcrate](https://www.runcrate.ai) serves open models (DeepSeek, GLM, Qwen, Kimi, gpt-oss) behind one OpenAI-compatible endpoint:
+
+```bash
+export RUNCRATE_API_KEY=rc_live_...
+cheetahclaws --model runcrate/deepseek-ai/DeepSeek-V4.1-Flash
 ```
 
 **AWS Bedrock / Azure / Vertex** use the `litellm/<provider>/<model>` form (`pip install ".[litellm]"`) — full env-var recipes in [recipes.md](docs/guides/recipes.md#alternative-cloud-providers-with-non-trivial-auth-via-the-litellm-provider).
@@ -399,12 +407,13 @@ cheetahclaws --model ollama/qwen2.5-coder    # 2. provider/model
 cheetahclaws --model kimi:moonshot-v1-32k    # 3. provider:model
 ```
 
-**Gateways keep the upstream path.** OpenRouter, Requesty, NIM and LiteLLM address models by a `<vendor>/<model>` path of their own, so those calls are double-prefixed — only the **first** segment is the provider, everything after it is passed through verbatim:
+**Gateways keep the upstream path.** OpenRouter, Requesty, Runcrate, NIM and LiteLLM address models by a `<vendor>/<model>` path of their own, so those calls are double-prefixed — only the **first** segment is the provider, everything after it is passed through verbatim:
 
 ```bash
 cheetahclaws --model openrouter/deepseek/deepseek-v4-flash        # → OpenRouter, model "deepseek/deepseek-v4-flash"
 cheetahclaws --model nim/meta/llama-3.3-70b-instruct              # → NVIDIA NIM
 cheetahclaws --model requesty/openai/gpt-4o-mini                  # → Requesty, model "openai/gpt-4o-mini"
+cheetahclaws --model runcrate/zai-org/GLM-5.3                     # → Runcrate, model "zai-org/GLM-5.3"
 cheetahclaws --model openrouter/deepseek/deepseek-v4-flash@gmicloud/fp8   # + pinned provider / quantization
 ```
 
