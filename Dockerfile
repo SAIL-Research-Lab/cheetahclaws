@@ -53,11 +53,18 @@ WORKDIR /workspace
 
 EXPOSE 8080
 
-# Healthcheck: web server's /api/config returns 200 once it's up.
+# Healthcheck: /health is the unauthenticated liveness endpoint (200 once
+# the server + DB are up). Don't point this at /api/* — those require a
+# login cookie and would report the container as permanently unhealthy.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD python -c "import urllib.request,sys; \
-sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/api/config', timeout=3).status == 200 else 1)" \
+sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3).status == 200 else 1)" \
   || exit 1
 
 ENTRYPOINT ["/usr/bin/tini", "--", "cheetahclaws"]
+# Binds 0.0.0.0 so the published port is reachable from outside the
+# container. That is only safe because auth stays ON: the terminal page needs
+# the generated password and the chat UI needs an account (first visitor
+# becomes admin; further accounts are admin-created). Never add --no-auth
+# here — anyone who can reach the port would get a shell.
 CMD ["--web", "--host", "0.0.0.0", "--port", "8080"]
