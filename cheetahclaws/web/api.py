@@ -171,6 +171,72 @@ _SECRET_KEYS = frozenset({
     "deepseek_api_key", "minimax_api_key", "custom_api_key",
 })
 
+# ── Multi-user privilege model ────────────────────────────────────────────
+# Web chat sessions run in the server owner's process with the owner's
+# config. Admins (the first registered account, or the --no-auth owner) can
+# do anything the REPL can; other accounts cannot touch process-global or
+# persistent state, nor loosen the owner's permission mode. The owner can
+# restore the old "everyone is trusted" behaviour with
+# "web_nonadmin_privileged": true in config.json.
+
+# Slash commands that change global/persistent state, reach the owner's
+# private data, or drive external bridges.
+_ADMIN_ONLY_COMMANDS = frozenset({
+    "config", "permissions", "cwd", "plugin", "mcp",
+    "telegram", "slack", "wechat", "weixin", "voice",
+    "load", "resume", "history", "search", "cloudsave", "memory",
+    "subscribe", "unsubscribe", "monitor",
+})
+
+# Config keys only admins may change: they redirect the owner's API keys
+# to arbitrary hosts (SSRF / key exfiltration).
+_ADMIN_ONLY_CONFIG_KEYS = frozenset({"custom_base_url", "ollama_base_url"})
+
+# Higher = more permissive. Non-admins may not exceed the owner's mode.
+_PERMISSION_RANK = {
+    "plan": 0, "manual": 1, "auto": 2, "accept-edits": 3, "accept-all": 4,
+}
+
+_ADMIN_HINT = ("The server owner can set \"web_nonadmin_privileged\": true "
+               "in ~/.cheetahclaws/config.json to allow all users.")
+
+
+def _user_is_admin(user_id: Optional[int]) -> bool:
+    """True for chat-UI admins and for the --no-auth owner."""
+    try:
+        from cheetahclaws.web import server as _srv
+        if _srv._server_no_auth:
+            return True
+    except ImportError:
+        pass
+    if user_id is None:
+        return False
+    try:
+        from cheetahclaws.web import db as _db
+        user = _db.repo.get_user(user_id)
+    except Exception:  # noqa: BLE001
+        return False
+    return bool(user and user.get("is_admin"))
+
+
+def _is_secret_key(key: str) -> bool:
+    k = key.lower()
+    return (k.endswith("_api_key") or k.endswith("token")
+            or k.endswith("secret") or "password" in k
+            or k in _SECRET_KEYS)
+
+
+def _redact_secrets(text: str, config: dict) -> str:
+    """Mask any secret config value (API keys, bot tokens...) found in text."""
+    if not text or not isinstance(text, str):
+        return text
+    for k, v in config.items():
+        if (isinstance(k, str) and isinstance(v, str) and len(v) >= 8
+                and _is_secret_key(k) and v in text):
+            text = text.replace(v, "***redacted***")
+    return text
+
+
 _API_KEY_CONFIG_MAP = {
     "anthropic": "anthropic_api_key",
     "openai": "openai_api_key",
@@ -213,9 +279,19 @@ class ChatSession:
 
         # Deep-copy config so permission_mode changes don't leak
         base = copy.deepcopy(base_config)
+        # The owner's configured baseline — the ceiling for non-admins.
+        self._owner_permission_mode = base.get("permission_mode", "auto")
+        self._owner_tool_profile = base.get("tool_profile")
         if existing and existing.get("config"):
             base.update(existing["config"])
         self.config: dict = base
+        if not self._privileged():
+            # A persisted session may predate the privilege model (or the
+            # user may have been demoted): re-clamp to the owner's ceiling.
+            if not self._mode_allowed(self.config.get("permission_mode")):
+                self.config["permission_mode"] = self._owner_permission_mode
+            if not self._profile_allowed(self.config.get("tool_profile")):
+                self.config["tool_profile"] = self._owner_tool_profile
         self.config["_session_id"] = self.session_id
 
         # Event fan-out: multiple WS clients can subscribe
@@ -246,6 +322,64 @@ class ChatSession:
         )
 
         self._init_runtime()
+
+    # ── Privilege checks ───────────────────────────────────────────────
+
+    def _privileged(self) -> bool:
+        if self.config.get("web_nonadmin_privileged"):
+            return True
+        return _user_is_admin(self.user_id)
+
+    def _mode_allowed(self, mode) -> bool:
+        """May a non-admin use this permission_mode?"""
+        rank = _PERMISSION_RANK.get(mode)
+        ceiling = _PERMISSION_RANK.get(self._owner_permission_mode, 2)
+        return rank is not None and rank <= ceiling
+
+    def _profile_allowed(self, profile) -> bool:
+        """May a non-admin use this tool_profile? Every profile is a subset
+        of "full" and a superset of "standard"."""
+        try:
+            from cheetahclaws.tool_registry import normalize_tool_profile
+            want = normalize_tool_profile(profile)
+            owner = normalize_tool_profile(self._owner_tool_profile)
+        except (ImportError, ValueError):
+            return False
+        return want == owner or want == "standard" or owner == "full"
+
+    def _check_config_update(self, updates: dict) -> None:
+        """Raise PermissionError if a non-admin tries a privileged change."""
+        if self._privileged():
+            return
+        for k in updates:
+            if k in _ADMIN_ONLY_CONFIG_KEYS:
+                raise PermissionError(
+                    f"Only admins can change '{k}'. {_ADMIN_HINT}")
+        if ("permission_mode" in updates
+                and not self._mode_allowed(updates["permission_mode"])):
+            raise PermissionError(
+                f"permission_mode '{updates['permission_mode']}' is more "
+                f"permissive than the server owner's "
+                f"'{self._owner_permission_mode}'; only admins can raise "
+                f"it. {_ADMIN_HINT}")
+        if ("tool_profile" in updates
+                and not self._profile_allowed(updates["tool_profile"])):
+            raise PermissionError(
+                f"tool_profile '{updates['tool_profile']}' exceeds the server "
+                f"owner's profile; only admins can widen it. {_ADMIN_HINT}")
+
+    def _slash_denied(self, line: str) -> bool:
+        """Broadcast a refusal and return True if `line` is admin-only."""
+        parts = line[1:].split(None, 1) if line.startswith("/") else []
+        cmd = parts[0].lower() if parts else ""
+        if cmd not in _ADMIN_ONLY_COMMANDS or self._privileged():
+            return False
+        msg = (f"/{cmd} is restricted to admin users in the web UI. "
+               f"{_ADMIN_HINT}")
+        self._broadcast(ChatEvent("command_result", {
+            "command": line, "output": msg,
+        }))
+        return True
 
     def _init_runtime(self):
         """Initialize RuntimeContext and AgentState."""
@@ -395,6 +529,9 @@ class ChatSession:
         cmd_name = cmd_parts[0].lower() if cmd_parts else ""
         cmd_args = cmd_parts[1].strip() if len(cmd_parts) > 1 else ""
 
+        if self._slash_denied(line):
+            return True
+
         # /ssj with no args → show interactive menu
         if cmd_name == "ssj" and not cmd_args:
             self._broadcast(ChatEvent("interactive_menu", {
@@ -499,6 +636,7 @@ class ChatSession:
                     if threading.current_thread().ident == _target_thread_id[0]:
                         import re as _re2
                         clean = _re2.sub(r'\x1b\[[0-9;]*m', '', s)
+                        clean = _redact_secrets(clean, session_ref.config)
                         if clean.strip():
                             self._broadcast(ChatEvent("text_chunk",
                                                       {"text": clean}))
@@ -565,6 +703,7 @@ class ChatSession:
 
         output = capture.getvalue().strip()
         output = _re.sub(r'\x1b\[[0-9;]*m', '', output)
+        output = _redact_secrets(output, self.config)
 
         if output:
             self._append_msg({"role": "assistant", "content": output})
@@ -687,6 +826,9 @@ class ChatSession:
         import io
         import re as _re
 
+        if self._slash_denied(line):
+            return
+
         capture = io.StringIO()
         old_stdout, old_stderr = sys.stdout, sys.stderr
         try:
@@ -698,6 +840,7 @@ class ChatSession:
             sys.stderr = old_stderr
 
         output = _re.sub(r'\x1b\[[0-9;]*m', '', capture.getvalue().strip())
+        output = _redact_secrets(output, self.config)
         if output:
             self._append_msg({"role": "assistant", "content": output})
             self._broadcast(ChatEvent("command_result", {
@@ -865,6 +1008,7 @@ class ChatSession:
     def update_config(self, updates: dict) -> dict:
         if not isinstance(updates, dict):
             raise ValueError("Config update must be an object.")
+        self._check_config_update(updates)
         normalized_profile = None
         if "tool_profile" in updates:
             from cheetahclaws.tool_registry import normalize_tool_profile
