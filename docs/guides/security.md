@@ -35,8 +35,11 @@ project's `.mcp.json` servers, `.cheetahclaws/plugins.json` plugins and
 REPL asks once at start (`Trust this folder and start them? [y/N]`), or run
 `/trust` (also `/trust list`, `/trust revoke [dir]`, and `cheetahclaws trust`
 from the shell). Trust is stored in `~/.cheetahclaws/trust.json` (0600), and
-each server/plugin is pinned by a hash of its command — if a `git pull`
-changes what an entry runs, it is skipped again until re-approved. User-level
+each server/plugin — and the project's hook block — is pinned by a hash of
+its command: if a `git pull` changes what an entry runs, it is skipped again
+until re-approved. An `.mcp.json` found *above* the repository (e.g.
+`~/.mcp.json`) is approved for this project only; its directory never becomes
+a trusted root for every repo beneath it. User-level
 config (`~/.cheetahclaws/mcp.json`, user plugins) is unaffected. Opt out:
 `trust_all_projects: true` or `CHEETAHCLAWS_TRUST_ALL=1`.
 
@@ -90,6 +93,13 @@ globally with `webfetch_allow_private: true`.
 **Secrets on disk.** `config.json`, `mcp.json`, `trust.json` and the daemon
 token are written atomically with mode 0600 (directory 0700). API keys that
 came from environment variables are never copied into `config.json`.
+
+**accept-edits scope.** `accept-edits` pre-approves edits only to ordinary
+files inside the workspace. Edits outside it, and to locations other programs
+execute or trust (`.git/`, `.github/`, `.cheetahclaws/` — where a hook is a
+command — `.claude/`, `.vscode/`, shell rc files, `.envrc`, `.npmrc`,
+`sitecustomize.py`, `*.pth`, …), still prompt.
+`accept_edits_outside_workspace: true` drops the workspace limit.
 
 **File editing.** `Edit`, `MultiEdit`, `ApplyPatch` and overwriting `Write`
 require the file to have been read in this session and refuse if it changed

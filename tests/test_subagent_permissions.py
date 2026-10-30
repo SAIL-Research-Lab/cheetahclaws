@@ -158,3 +158,21 @@ def test_manager_forwards_to_parent_callback(manager_with_perm_run):
     assert seen["granted"] is True
     assert asked == ["[sub-agent w2] Edit: /etc/hosts"]
     assert task.result == "done"
+
+
+def test_new_edit_tools_follow_subagent_policy(tmp_path):
+    from cheetahclaws.agent import PermissionRequest
+    from cheetahclaws.multi_agent.subagent import SubAgentPermissionPolicy
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    pol = SubAgentPermissionPolicy.from_parent_config(
+        {"permission_mode": "auto", "auto_approve": False}, agent_name="a",
+        worktree_path=str(wt))
+    inside = PermissionRequest(description="x", signature="", tool_name="MultiEdit",
+                               tool_input={"file_path": str(wt / "a.py"), "edits": []})
+    assert pol.decide(inside) is True
+    patch_out = (f"*** Begin Patch\n*** Update File: {wt / 'a.py'}\n@@\n-a\n+b\n"
+                 f"*** Delete File: {tmp_path / 'outside.py'}\n*** End Patch\n")
+    mixed = PermissionRequest(description="x", signature="", tool_name="ApplyPatch",
+                              tool_input={"patch": patch_out})
+    assert pol.decide(mixed) is False

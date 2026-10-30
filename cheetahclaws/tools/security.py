@@ -126,6 +126,18 @@ def _flag_name(a: str) -> str:
     return a.split("=", 1)[0]
 
 
+def _flag_in(a: str, banned) -> bool:
+    """True if ``a`` names a flag in ``banned``, counting GNU/git long-option
+    abbreviations: getopt_long and git's parse-options accept any unique
+    prefix, so `--upload-pa` *is* `--upload-pack` and `--checkpoint-act` *is*
+    `--checkpoint-action`.  Matching a prefix of a banned name errs safe."""
+    name = _flag_name(a)
+    if name in banned:
+        return True
+    return (name.startswith("--") and len(name) > 2
+            and any(b.startswith("--") and b.startswith(name) for b in banned))
+
+
 def _short_cluster(a: str) -> str:
     """'-tvf' → 'tvf'; '' for long flags and non-flags."""
     if a.startswith("-") and not a.startswith("--") and len(a) > 1:
@@ -145,7 +157,7 @@ def _git_listing_guard(write_flags: set[str], ok_letters: str,
         listing = False
         for a in args:
             name = _flag_name(a)
-            if name in write_flags:
+            if _flag_in(a, write_flags):
                 return False
             cluster = _short_cluster(a)
             if cluster and not a.startswith("--"):
@@ -163,19 +175,21 @@ def _git_listing_guard(write_flags: set[str], ok_letters: str,
 _SUBCOMMAND_FLAG_GUARDS = {
     ("git", "config"):    lambda args: any(a in ("--get", "--get-all", "--list", "-l",
                                                  "--get-regexp") for a in args)
-                          and not any(_flag_name(a) in (
+                          and not any(_flag_in(a, (
                               "--add", "--unset", "--unset-all", "--replace-all",
                               "--rename-section", "--remove-section", "-e",
-                              "--edit") for a in args),
+                              "--edit", "--file", "--blob")) for a in args),
     ("git", "stash"):     lambda args: bool(args) and args[0] in ("list", "show"),
     ("git", "worktree"):  lambda args: bool(args) and args[0] == "list",
     ("git", "submodule"): lambda args: bool(args) and args[0] in ("status", "summary"),
     ("git", "bisect"):    lambda args: bool(args) and args[0] in ("log", "view"),
     ("git", "notes"):     lambda args: bool(args) and args[0] in ("list", "show"),
-    ("git", "remote"):    lambda args: not args or args[0] in ("-v", "--verbose",
-                                                               "show", "get-url"),
-    ("git", "reflog"):    lambda args: not args or args[0] in ("show", "exists")
-                          or args[0].startswith("-"),
+    # Flags may come before the subcommand (`git remote -v add …`), so judge
+    # the first positional, not the first argument.
+    ("git", "remote"):    lambda args: (_positionals(args)[:1] or ["show"])[0]
+                          in ("show", "get-url"),
+    ("git", "reflog"):    lambda args: not any(p in ("expire", "delete", "drop")
+                                               for p in _positionals(args)),
     ("git", "branch"):    _git_listing_guard(
         {"-d", "-D", "--delete", "-m", "-M", "--move", "-c", "-C", "--copy",
          "-f", "--force", "-u", "--set-upstream-to", "--unset-upstream",
@@ -210,8 +224,7 @@ def _guard_find(args: list[str]) -> bool:
 
 
 def _guard_no_flags(banned: set[str]):
-    return lambda args: not any(a in banned or a.split("=", 1)[0] in banned
-                                for a in args)
+    return lambda args: not any(_flag_in(a, banned) for a in args)
 
 
 def _guard_no_flag_prefix(*prefixes: str):
@@ -302,13 +315,32 @@ def _sed_script_is_safe(script: str) -> bool:
     return True
 
 
+# GNU sed's long options; an abbreviation resolves to the unique match.
+_SED_LONG = ("--expression", "--file", "--in-place", "--separate",
+             "--line-length", "--quiet", "--silent", "--regexp-extended",
+             "--null-data", "--zero-terminated", "--posix", "--debug",
+             "--sandbox", "--unbuffered", "--follow-symlinks", "--binary",
+             "--version", "--help")
+
+
+def _sed_long_name(a: str) -> str:
+    """Full option name for ``a`` ('' if unknown or ambiguous)."""
+    name = _flag_name(a)
+    if name in _SED_LONG:
+        return name
+    hits = [o for o in _SED_LONG if o.startswith(name)]
+    return hits[0] if len(hits) == 1 else ""
+
+
 def _guard_sed(args: list[str]) -> bool:
     scripts: list[str] = []
     positional: list[str] = []
     i = 0
     while i < len(args):
         a = args[i]
-        name = _flag_name(a)
+        name = _sed_long_name(a) if a.startswith("--") and a != "--" else _flag_name(a)
+        if a.startswith("--") and a != "--" and not name:
+            return False                   # unknown / ambiguous long option
         if name in ("--in-place", "--file", "--separate"):
             return False
         if name == "--expression":
@@ -353,14 +385,15 @@ def _guard_tar(args: list[str]) -> bool:
     for a in args:
         name = _flag_name(a)
         if a.startswith("--"):
-            if name in ("--list",):
+            if _flag_in(a, ("--list",)):
                 listing = True
-            if name in ("--extract", "--get", "--create", "--append", "--update",
-                        "--delete", "--concatenate", "--catenate",
-                        "--to-command", "--checkpoint-action",
-                        "--use-compress-program", "--info-script",
-                        "--new-volume-script", "--rsh-command", "--rmt-command",
-                        "--index-file", "--file-list"):
+            if _flag_in(a, ("--extract", "--get", "--create", "--append", "--update",
+                            "--delete", "--concatenate", "--catenate",
+                            "--to-command", "--checkpoint-action",
+                            "--use-compress-program", "--info-script",
+                            "--new-volume-script", "--rsh-command", "--rmt-command",
+                            "--index-file", "--file-list", "--files-from",
+                            "--remove-files", "--overwrite")):
                 return False
             continue
         cluster = _short_cluster(a)
@@ -678,7 +711,7 @@ def _classify_segment(tokens: list[str], extra_safe: frozenset[str]) -> bool:
                 skip = False
                 continue
             if a.startswith("-"):
-                if _flag_name(a) in banned:
+                if _flag_in(a, banned):
                     return False
                 skip = a in value_flags and "=" not in a
                 continue
@@ -687,9 +720,9 @@ def _classify_segment(tokens: list[str], extra_safe: frozenset[str]) -> bool:
         if sub not in _READ_ONLY_SUBCOMMANDS[prog]:
             return False
         rest = args[sub_idx + 1:]
-        if prog == "git" and any(_flag_name(a) in _GIT_BANNED_ANYWHERE for a in rest):
+        if prog == "git" and any(_flag_in(a, _GIT_BANNED_ANYWHERE) for a in rest):
             return False
-        if prog == "kubectl" and any(_flag_name(a) in banned for a in rest):
+        if prog == "kubectl" and any(_flag_in(a, banned) for a in rest):
             return False
         guard = _SUBCOMMAND_FLAG_GUARDS.get((prog, sub))
         if guard:

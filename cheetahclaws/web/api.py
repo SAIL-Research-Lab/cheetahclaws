@@ -186,6 +186,9 @@ _ADMIN_ONLY_COMMANDS = frozenset({
     "telegram", "slack", "wechat", "weixin", "voice",
     "load", "resume", "history", "search", "cloudsave", "memory",
     "subscribe", "unsubscribe", "monitor",
+    # write files as the owner or start long-lived owner-privileged workers
+    "export", "checkpoint", "rewind", "init", "agent", "worker", "ssj",
+    "trust", "qq", "daemon", "workspace", "lab", "proactive",
 })
 
 # Config keys only admins may change: they redirect the owner's API keys

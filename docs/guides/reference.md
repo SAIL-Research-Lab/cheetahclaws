@@ -428,7 +428,7 @@ When prompting is enabled, the prompt is reserved for actions that can **change 
 | Mode | Behavior |
 |---|---|
 | `auto` (default) | Every read-only tool and every read-only shell pipeline runs automatically, as does creating a new file inside the workspace; prompts before overwriting/editing files, running arbitrary commands, and spawning sub-agents. |
-| `accept-edits` | Like `auto`, but also auto-runs file edits (`Write`/`Edit`/`MultiEdit`/`ApplyPatch`/`NotebookEdit`); other (non-allow-listed) Bash still prompts. The middle ground between `auto` and `accept-all`. |
+| `accept-edits` | Like `auto`, but also auto-runs file edits (`Write`/`Edit`/`MultiEdit`/`ApplyPatch`/`NotebookEdit`) to ordinary files inside the workspace (config/hook locations and paths outside still ask); other (non-allow-listed) Bash still prompts. The middle ground between `auto` and `accept-all`. |
 | `accept-all` | Never prompts; all operations proceed automatically. |
 | `manual` | Prompts before every single operation, including reads. |
 | `plan` | Read-only analysis mode: reads + safe Bash run, all writes are refused except the plan file. Entered via `/plan <desc>` or the `EnterPlanMode` tool. |

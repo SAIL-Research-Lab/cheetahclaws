@@ -49,6 +49,9 @@ _lock = threading.RLock()
 _warned: set[str] = set()
 
 
+_VIA = "__via__"   # approvals key: trusted roots the approval was granted from
+
+
 def _trust_file() -> Path:
     # Resolved at call time so tests (and HOME changes) are honoured.
     return Path.home() / ".cheetahclaws" / "trust.json"
@@ -147,23 +150,41 @@ def trust(path: str | os.PathLike | None = None) -> dict:
         approved_mcp: list[str] = []
         approved_plugins: list[str] = []
 
+        def _pin(file: Path, entries: dict) -> None:
+            # Approvals remember which trusted root they were granted from, so
+            # an .mcp.json found *above* the project (say ~/.mcp.json) is
+            # approved for this project only — its directory is not made a
+            # trusted root — and revoking the root revokes them too.
+            prev = data["approvals"].get(str(file), {})
+            via = sorted(set(prev.get(_VIA, [])) | {real})
+            data["approvals"][str(file)] = {**entries, _VIA: via}
+
         mcp_file = find_project_mcp_file(real)
         if mcp_file is not None:
+            # Started in a subdirectory of the repo that holds the .mcp.json:
+            # trust that repo root too.  An .mcp.json *outside* the repo
+            # (~/.mcp.json, /tmp/.mcp.json) never turns its directory —
+            # and every repo under it — into a trusted root.
             mroot = str(mcp_file.parent)
-            if mroot not in data["projects"]:
+            groot = _git_root(real)
+            if mroot not in data["projects"] and groot is not None \
+                    and (mroot == groot or mroot.startswith(groot.rstrip(os.sep) + os.sep)):
                 data["projects"][mroot] = {"trusted_at": now}
                 roots.append(mroot)
             servers = _read_mcp_servers(mcp_file)
-            data["approvals"][str(mcp_file)] = {
-                n: mcp_fingerprint(raw) for n, raw in servers.items()}
+            _pin(mcp_file, {n: mcp_fingerprint(raw) for n, raw in servers.items()})
             approved_mcp = sorted(servers)
 
         pfile = project_plugins_file(real)
         if pfile.exists():
             plugins = _read_project_plugins(pfile)
-            data["approvals"][str(pfile)] = {
-                n: plugin_fingerprint(raw) for n, raw in plugins.items()}
+            _pin(pfile, {n: plugin_fingerprint(raw) for n, raw in plugins.items()})
             approved_plugins = sorted(plugins)
+
+        sfile = project_settings_file(real)
+        hooks_block = _read_project_hooks(sfile)
+        if hooks_block:
+            _pin(sfile, {"hooks": hooks_fingerprint(hooks_block)})
 
         _save(data)
         _warned.clear()
@@ -192,9 +213,11 @@ def revoke(path: str | os.PathLike | None = None) -> bool:
         data = _load()
         found = data["projects"].pop(real, None) is not None
         prefix = real.rstrip(os.sep) + os.sep
-        for f in [f for f in data["approvals"] if f.startswith(prefix)]:
-            data["approvals"].pop(f, None)
-            found = True
+        for f in list(data["approvals"]):
+            via = data["approvals"][f].get(_VIA, [])
+            if f.startswith(prefix) or real in via:
+                data["approvals"].pop(f, None)
+                found = True
         if found:
             _save(data)
     return found
@@ -216,6 +239,11 @@ def mcp_fingerprint(raw: dict) -> str:
     return _fp({k: raw.get(k) for k in ("type", "command", "args", "url", "env", "cwd")})
 
 
+def hooks_fingerprint(hooks_block: Any) -> str:
+    """Hash a settings.json ``hooks`` block — any changed command re-asks."""
+    return _fp(hooks_block)
+
+
 def plugin_fingerprint(raw: dict) -> str:
     raw = raw if isinstance(raw, dict) else {}
     inst = raw.get("install_dir")
@@ -225,6 +253,15 @@ def plugin_fingerprint(raw: dict) -> str:
 
 
 # ── Project file discovery ────────────────────────────────────────────────
+
+def _git_root(start: str) -> str | None:
+    """Nearest ancestor (inclusive) holding a .git entry, or None."""
+    p = Path(start)
+    for cand in (p, *p.parents):
+        if (cand / ".git").exists():
+            return str(cand)
+    return None
+
 
 def find_project_mcp_file(start: str | os.PathLike | None = None) -> Path | None:
     """Walk up (max 10 levels) from ``start`` to the nearest ``.mcp.json``."""
@@ -245,6 +282,28 @@ def find_project_mcp_file(start: str | os.PathLike | None = None) -> Path | None
 
 def project_plugins_file(root: str | os.PathLike | None = None) -> Path:
     return Path(_real(root)) / ".cheetahclaws" / "plugins.json"
+
+
+def project_settings_file(root: str | os.PathLike | None = None) -> Path:
+    return Path(_real(root)) / ".cheetahclaws" / "settings.json"
+
+
+def _read_project_hooks(path: Path) -> Any:
+    try:
+        if _real(path) == _real(Path.home() / ".cheetahclaws" / "settings.json"):
+            return None      # cwd == $HOME: that's the user's own settings
+        return json.loads(path.read_text(encoding="utf-8")).get("hooks") or None
+    except Exception:
+        return None
+
+
+def is_hooks_approved(settings_file: str | os.PathLike, hooks_block: Any) -> bool:
+    """Project hooks run commands, so they need the same pinned approval as
+    MCP servers: trusting a folder approves the hooks present at that moment;
+    a hook added or changed later (a `git pull`) is skipped until re-approved."""
+    if trust_all_enabled():
+        return True
+    return _approved(Path(settings_file), "hooks", hooks_fingerprint(hooks_block))
 
 
 def _is_user_plugins_file(path: Path) -> bool:
@@ -274,10 +333,13 @@ def _approved(file: Path, name: str, fp: str) -> bool:
     if trust_all_enabled():
         return True
     real_file = _real(file)
-    if not is_trusted(os.path.dirname(real_file)):
-        return False
     pinned = _load()["approvals"].get(real_file, {})
-    return pinned.get(name) == fp
+    if pinned.get(name) != fp:
+        return False
+    via = pinned.get(_VIA)
+    if via is None:          # approvals written before "via" was recorded
+        return is_trusted(os.path.dirname(real_file))
+    return any(is_trusted(v) for v in via)
 
 
 def is_mcp_server_approved(mcp_file: str | os.PathLike, name: str, raw: dict) -> bool:
@@ -320,6 +382,12 @@ def pending_untrusted(path: str | os.PathLike | None = None) -> list[dict]:
             if not is_plugin_approved(pfile, name, raw):
                 out.append({"kind": "plugin", "name": name, "file": str(pfile),
                             "reason": "changed" if trusted else "untrusted"})
+    sfile = project_settings_file(path)
+    hooks_block = _read_project_hooks(sfile)
+    if hooks_block and not is_hooks_approved(sfile, hooks_block):
+        events = ", ".join(sorted(hooks_block)) if isinstance(hooks_block, dict) else "hooks"
+        out.append({"kind": "hooks", "name": events, "file": str(sfile),
+                    "reason": "changed" if is_trusted(sfile.parent.parent) else "untrusted"})
     return out
 
 

@@ -1110,6 +1110,57 @@ def _creates_new_workspace_file(tc: dict, config: dict) -> bool:
     return True
 
 
+# Path components an edit must never touch without asking, even in
+# accept-edits: files other programs execute or trust (git hooks, CI, shell
+# rc files, package-manager config) and cheetahclaws' own settings, where a
+# hook entry is a command that runs on the next tool call.
+_EDIT_PROTECTED_PARTS = frozenset({
+    ".git", ".github", ".gitlab-ci.yml", ".husky", ".cheetahclaws", ".claude",
+    ".vscode", ".idea", ".mcp.json", ".envrc", ".env", ".bashrc", ".zshrc",
+    ".profile", ".bash_profile", ".zprofile", ".npmrc", ".pypirc",
+    ".yarnrc", ".yarnrc.yml", ".cargo", ".ssh", ".config",
+})
+
+
+def _edit_targets(tc: dict) -> list[str]:
+    inp = tc.get("input") or {}
+    if tc.get("name") == "ApplyPatch":
+        from cheetahclaws.tools.patch import patch_paths
+        return patch_paths(inp.get("patch") or inp.get("input") or "")
+    path = inp.get("file_path") or inp.get("notebook_path") or ""
+    return [path] if path else []
+
+
+def _edit_targets_are_plain_workspace_files(tc: dict, config: dict) -> bool:
+    """accept-edits pre-approves edits only to ordinary files inside the
+    workspace.  Anything outside it, any protected config/hook location and
+    files Python runs at startup still prompt.
+    ``accept_edits_outside_workspace: true`` drops the workspace limit."""
+    targets = _edit_targets(tc)
+    if not targets:
+        return False
+    try:
+        from pathlib import Path as _Path
+        root = _Path(config.get("allowed_root") or config.get("_worktree_cwd")
+                     or _Path.cwd()).expanduser().resolve()
+        for t in targets:
+            p = _Path(t).expanduser()
+            if not p.is_absolute():
+                p = root / p
+            resolved = p.resolve()
+            parts = set(_Path(os.path.normpath(str(p))).parts) | set(resolved.parts)
+            if parts & _EDIT_PROTECTED_PARTS:
+                return False
+            if resolved.name in _AUTO_EXECUTED_NAMES \
+                    or resolved.name.endswith(_AUTO_EXECUTED_SUFFIXES):
+                return False
+            if not config.get("accept_edits_outside_workspace", False):
+                resolved.relative_to(root)   # ValueError → outside
+    except Exception:
+        return False
+    return True
+
+
 # ── Bash grant signatures ─────────────────────────────────────────────────
 #
 # A grant ("s"/"!" at a prompt) is keyed on program + subcommand.  A command
@@ -1429,7 +1480,8 @@ def _check_permission(tc: dict, config: dict) -> bool:
     # still applies at execution time).
     if perm_mode == "accept-edits" and name in ("Write", "Edit", "MultiEdit",
                                                 "ApplyPatch", "NotebookEdit"):
-        return True
+        if _edit_targets_are_plain_workspace_files(tc, config):
+            return True
 
     # "auto" mode (and accept-edits fall-through): prompt only for actions
     # that can change the user's files, run arbitrary code, or reach outside

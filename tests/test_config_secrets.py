@@ -139,3 +139,17 @@ def test_daemon_token_existing_loose_mode_tightened(tmp_path):
     os.chmod(p, 0o644)
     assert auth.load_or_create_token(p) == "abc"
     assert _mode(p) == 0o600
+
+
+def test_save_keeps_persisted_key_equal_to_env(tmp_path, monkeypatch):
+    import json
+    from cheetahclaws import config as cc
+    cfile = tmp_path / "config.json"
+    monkeypatch.setattr(cc, "CONFIG_FILE", cfile)
+    monkeypatch.setattr(cc, "CONFIG_DIR", tmp_path)
+    cfile.write_text(json.dumps({"anthropic_api_key": "sk-same"}))
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-same")
+    cfg = cc.load_config()
+    cfg["model"] = "x"
+    cc.save_config(cfg)
+    assert json.loads(cfile.read_text())["anthropic_api_key"] == "sk-same"

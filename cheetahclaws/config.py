@@ -414,8 +414,11 @@ def _strip_env_sourced(cfg: dict, data: dict) -> dict:
     out = dict(data)
     for key, values in env_vals.items():
         if key in out and out[key] in values:
-            if key in on_disk and on_disk[key] not in values:
-                out[key] = on_disk[key]      # keep the user's own persisted value
+            if on_disk.get(key):
+                # The user persisted this key themselves — even if it equals
+                # the env value, deleting it would strand launches that run
+                # without that env var (desktop app, cron).
+                out[key] = on_disk[key]
             else:
                 out.pop(key, None)
     return out

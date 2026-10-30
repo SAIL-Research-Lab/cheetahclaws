@@ -16,7 +16,7 @@ from cheetahclaws.ui.render import clr, info, ok, warn, err
 
 def _show_pending(pending: list[dict]) -> None:
     for it in pending:
-        label = "MCP server" if it["kind"] == "mcp" else "plugin"
+        label = {"mcp": "MCP server", "plugin": "plugin", "hooks": "hooks"}.get(it["kind"], it["kind"])
         why = "untrusted project" if it["reason"] == "untrusted" else "new/changed"
         print(f"  {clr(it['name'], 'yellow')} ({label}, {why})  {clr(it['file'], 'dim')}")
 

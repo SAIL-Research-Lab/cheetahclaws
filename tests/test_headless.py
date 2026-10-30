@@ -292,3 +292,15 @@ def test_help_text_is_not_stale():
     import cheetahclaws.cli as cli
     assert "python cheetahclaws.py" not in cli.__doc__
     assert "cheetahclaws exec" in cli.__doc__
+
+
+def test_path_rules_cannot_escape_the_workspace(tmp_path, monkeypatch):
+    from cheetahclaws.headless import rule_matches
+    (tmp_path / "src").mkdir()
+    monkeypatch.chdir(tmp_path)
+    assert rule_matches("Edit(src/**)", "Edit", {"file_path": "src/a.py"})
+    assert rule_matches("Edit(src/**)", "Edit", {"file_path": str(tmp_path / "src" / "a.py")})
+    assert not rule_matches("Edit(src/**)", "Edit", {"file_path": "src/../../../home/u/.bashrc"})
+    assert not rule_matches("Edit(*.py)", "Edit", {"file_path": "../outside.py"})
+    assert not rule_matches("Write(src/*.py)", "Write", {"file_path": "/etc/passwd"})
+    assert rule_matches("Read(/etc/*)", "Read", {"file_path": "/etc/hosts"})

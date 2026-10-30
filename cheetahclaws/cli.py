@@ -2271,12 +2271,18 @@ def main():
         sys.exit(_legacy_main(sys.argv[2:]))
 
     # `cheetahclaws trust [list|revoke [dir]|dir]` — workspace trust from the shell.
-    if len(sys.argv) >= 2 and sys.argv[1] == "trust":
+    # Only when the arguments look like the subcommand's, so a prompt such as
+    # `cheetahclaws trust the tests` still reaches the agent.
+    if len(sys.argv) >= 2 and sys.argv[1] == "trust" and (
+            len(sys.argv) == 2 or sys.argv[2] in ("list", "ls", "status", "revoke", "-h", "--help")
+            or (len(sys.argv) == 3 and os.path.isdir(os.path.expanduser(sys.argv[2])))):
         from cheetahclaws.trust import main as _trust_main
         sys.exit(_trust_main(sys.argv[2:]))
 
     # `cheetahclaws replay <id>` — read-only timeline of a recorded session.
-    if len(sys.argv) >= 2 and sys.argv[1] == "replay":
+    if len(sys.argv) >= 2 and sys.argv[1] == "replay" and (
+            len(sys.argv) == 2 or sys.argv[2].startswith("-") or sys.argv[2] == "last"
+            or (len(sys.argv) <= 4 and re.fullmatch(r"[0-9a-f]{4,}", sys.argv[2] or ""))):
         from cheetahclaws.event_log import replay_main as _replay_main
         sys.exit(_replay_main(sys.argv[2:]))
     # `cheetahclaws exec ...` is `cheetahclaws -p ...` (headless) spelled as

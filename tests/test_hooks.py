@@ -113,7 +113,8 @@ def test_project_hooks_require_trust(env, monkeypatch):
     assert not hooks.has_hooks("PreToolUse")
 
     from cheetahclaws import trust as _trust
-    monkeypatch.setattr(_trust, "is_trusted", lambda path: str(path) == str(env.proj))
+    monkeypatch.setattr(_trust, "is_hooks_approved",
+                        lambda f, block: str(f).startswith(str(env.proj)))
     hooks._cache["key"] = None
     assert hooks.has_hooks("PreToolUse")
     assert hooks.run_hooks("PreToolUse", {}, match_value="Bash").decision == "deny"

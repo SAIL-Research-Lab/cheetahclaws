@@ -210,13 +210,28 @@ def get_agent_definition(name: str) -> Optional[AgentDefinition]:
 # tells the parent what was blocked and how to unblock it.
 
 SUBAGENT_PERMISSION_MODES = ("inherit", "auto-edits", "deny")
-_EDIT_TOOLS = frozenset({"Write", "Edit", "NotebookEdit"})
+_EDIT_TOOLS = frozenset({"Write", "Edit", "MultiEdit", "ApplyPatch", "NotebookEdit"})
 # Interactive prompts from concurrent sub-agents must not interleave.
 _PROMPT_LOCK = threading.Lock()
 
 
+def _edit_paths(req, name: str, path: str) -> list:
+    """Every file an edit request touches (an ApplyPatch can touch several)."""
+    inp = getattr(req, "tool_input", None) or {}
+    if name == "ApplyPatch":
+        try:
+            from cheetahclaws.tools.patch import patch_paths
+            return patch_paths(inp.get("patch") or inp.get("input") or "")
+        except Exception:
+            return []
+    return [inp.get("file_path") or inp.get("notebook_path") or path]
+
+
 def _tool_from_request(req) -> tuple:
     """Return (tool_name, path) recovered from a PermissionRequest."""
+    if getattr(req, "tool_name", ""):
+        inp = getattr(req, "tool_input", None) or {}
+        return req.tool_name, inp.get("file_path") or inp.get("notebook_path") or ""
     sig = getattr(req, "signature", "") or ""
     name, _, rest = sig.partition(":")
     path = rest if name in _EDIT_TOOLS else ""
@@ -343,7 +358,8 @@ class SubAgentPermissionPolicy:
             if self.mode == "auto-edits" and name in _EDIT_TOOLS:
                 req.granted = True
                 return True
-            if name in _EDIT_TOOLS and _is_within(path, self.worktree_path):
+            paths = _edit_paths(req, name, path) if name in _EDIT_TOOLS else []
+            if paths and all(p and _is_within(p, self.worktree_path) for p in paths):
                 req.granted = True
                 return True
             if name and name not in _EDIT_TOOLS and name != "Bash" \

@@ -263,10 +263,15 @@ def test_accept_all_never_asks():
                              _cfg("aa", permission_mode="accept-all")) is True
 
 
-def test_accept_edits_preapproves_edits_only():
+def test_accept_edits_preapproves_edits_only(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     cfg = _cfg("ae", permission_mode="accept-edits")
-    assert _check_permission(_tc("Edit", file_path="/tmp/x.py"), cfg) is True
+    assert _check_permission(_tc("Edit", file_path="x.py"), cfg) is True
     assert _check_permission(_tc("Bash", command="rm -rf build"), cfg) is False
+    # Outside the workspace still asks, unless explicitly widened.
+    assert _check_permission(_tc("Edit", file_path="/etc/x.py"), cfg) is False
+    cfg["accept_edits_outside_workspace"] = True
+    assert _check_permission(_tc("Edit", file_path="/etc/x.py"), cfg) is True
 
 
 def test_plan_mode_refuses_writes_outside_the_plan_file():

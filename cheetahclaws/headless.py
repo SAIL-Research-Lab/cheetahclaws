@@ -149,16 +149,23 @@ def rule_matches(rule: str, name: str, inp: Optional[dict]) -> bool:
             prefix = spec[:-2].strip()
             return cmd == prefix or cmd.startswith(prefix + " ")
         return fnmatch.fnmatchcase(cmd, spec)
-    target = (inp.get("file_path") or inp.get("notebook_path") or inp.get("path")
-              or inp.get("url") or inp.get("pattern") or "")
-    if not target:
-        return False
-    target = str(target)
-    if fnmatch.fnmatchcase(target, spec):
-        return True
+    path = inp.get("file_path") or inp.get("notebook_path") or inp.get("path")
+    if not path:
+        # URL / pattern arguments are matched as given.
+        other = inp.get("url") or inp.get("pattern") or ""
+        return bool(other) and fnmatch.fnmatchcase(str(other), spec)
+    # File paths are matched only in normalised form: fnmatch's `*` also
+    # matches "/" and "..", so the raw string `src/../../.bashrc` would match
+    # `src/**`.  A relative spec covers paths inside the working directory;
+    # an absolute spec is matched against the resolved absolute path.
     try:
-        rel = os.path.relpath(os.path.abspath(target), os.getcwd())
-    except ValueError:
+        absolute = os.path.realpath(os.path.expanduser(str(path)))
+        rel = os.path.relpath(absolute, os.path.realpath(os.getcwd()))
+    except (ValueError, OSError):
+        return False
+    if os.path.isabs(os.path.expanduser(spec)):
+        return fnmatch.fnmatchcase(absolute, os.path.normpath(os.path.expanduser(spec)))
+    if rel == ".." or rel.startswith(".." + os.sep) or os.path.isabs(rel):
         return False
     return fnmatch.fnmatchcase(rel, spec)
 

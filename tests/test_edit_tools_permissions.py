@@ -27,7 +27,7 @@ def test_new_edit_tools_are_not_auto_approved_in_auto_or_plan(tc):
 
 
 @pytest.mark.parametrize("name,inp", [
-    ("MultiEdit", {"file_path": "/tmp/x.py", "edits": []}),
+    ("MultiEdit", {"file_path": "x.py", "edits": []}),
     ("ApplyPatch", {"patch": PATCH_A}),
 ])
 def test_accept_edits_covers_new_edit_tools(name, inp):
@@ -53,3 +53,26 @@ def test_session_grant_for_one_patch_does_not_cover_another(monkeypatch):
 def test_permission_desc_summarises_patch():
     d = _permission_desc(_tc("ApplyPatch", {"patch": PATCH_AB}))
     assert "M a.py" in d and "D b.py" in d
+
+
+@pytest.mark.parametrize("path", [
+    "~/.cheetahclaws/settings.json",
+    ".git/hooks/pre-commit",
+    ".github/workflows/ci.yml",
+    "~/.bashrc",
+    "/etc/hosts",
+    "../outside.py",
+    "pkg/sitecustomize.py",
+])
+def test_accept_edits_still_asks_for_protected_or_outside_paths(path, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    tc = _tc("Edit", {"file_path": path, "old_string": "a", "new_string": "b"})
+    assert _check_permission(tc, _cfg("accept-edits")) is False
+
+
+def test_accept_edits_approves_plain_workspace_file(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    tc = _tc("Edit", {"file_path": "src/app.py", "old_string": "a", "new_string": "b"})
+    assert _check_permission(tc, _cfg("accept-edits")) is True
+    patch = "*** Begin Patch\n*** Update File: .github/workflows/x.yml\n@@\n-a\n+b\n*** End Patch\n"
+    assert _check_permission(_tc("ApplyPatch", {"patch": patch}), _cfg("accept-edits")) is False

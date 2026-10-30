@@ -183,6 +183,18 @@ def _is_trusted(path: Path) -> bool:
         return False
 
 
+def _hooks_approved(settings_file: Path, hooks_block) -> bool:
+    """Trusted folder AND these exact hook commands approved (see trust.py)."""
+    try:
+        from cheetahclaws.trust import is_hooks_approved
+    except ImportError:
+        return False
+    try:
+        return bool(is_hooks_approved(settings_file, hooks_block))
+    except Exception:
+        return False
+
+
 _cache_lock = threading.Lock()
 _cache: dict = {"key": None, "hooks": {}, "disabled": False}
 _warned_untrusted: set = set()
@@ -279,14 +291,14 @@ def load_hooks() -> dict:
     if not same and key[1][1] is not None:
         proj_s = _read_settings(proj_p)
         if proj_s.get("hooks"):
-            if _is_trusted(root):
+            if _hooks_approved(proj_p, proj_s.get("hooks")):
                 disabled = disabled or bool(proj_s.get("disableAllHooks"))
                 for ev, lst in _parse_hook_block(proj_s, "project").items():
                     merged.setdefault(ev, []).extend(lst)
             elif str(root) not in _warned_untrusted:
                 _warned_untrusted.add(str(root))
-                _warn(f"project hooks in {proj_p} ignored: workspace is not "
-                      f"trusted")
+                _warn(f"project hooks in {proj_p} ignored: not approved "
+                      f"(new or changed, or folder not trusted) — run /trust")
     if disabled:
         merged = {}
     with _cache_lock:
