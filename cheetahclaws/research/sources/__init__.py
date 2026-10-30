@@ -17,7 +17,7 @@ Sources are tiered:
     TIER_OPTIONAL  — requires an API key; silently skipped without it
 
 Domain assignment decides which sources run for a given domain filter:
-    academic → arxiv, semantic_scholar, openalex
+    academic → arxiv, semantic_scholar, openalex  (+ google_scholar, serply_scholar when available)
     tech     → hackernews, github, stackoverflow
     finance  → polymarket, sec_edgar
     news     → google_news

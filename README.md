@@ -316,7 +316,7 @@ cheetahclaws --model gpt-4o             # pick any model
 cheetahclaws --model deepseek-chat --thinking --verbose
 ```
 
-Provider get-key pages: [Anthropic](https://console.anthropic.com) · [OpenAI](https://platform.openai.com) · [Gemini](https://aistudio.google.com) · [Kimi](https://platform.moonshot.cn) · [Qwen](https://dashscope.aliyun.com) · [Zhipu](https://open.bigmodel.cn) · [DeepSeek](https://platform.deepseek.com) · [MiniMax](https://platform.minimaxi.chat) · [OpenRouter](https://openrouter.ai/keys) · [Requesty](https://app.requesty.ai/api-keys) · [Runcrate](https://www.runcrate.ai/dashboard/api-keys).
+Provider get-key pages: [Anthropic](https://console.anthropic.com) · [OpenAI](https://platform.openai.com) · [Gemini](https://aistudio.google.com) · [Kimi](https://platform.moonshot.cn) · [Qwen](https://dashscope.aliyun.com) · [Zhipu](https://open.bigmodel.cn) · [DeepSeek](https://platform.deepseek.com) · [MiniMax](https://platform.minimaxi.chat) · [OpenRouter](https://openrouter.ai/keys) · [Requesty](https://app.requesty.ai/api-keys).
 
 **One key for 400+ models** — [OpenRouter](https://openrouter.ai) fronts every major vendor behind one OpenAI-compatible endpoint, so a single key covers Claude, GPT, Gemini, DeepSeek, Llama, Qwen and the rest:
 
@@ -335,12 +335,7 @@ cheetahclaws --model requesty/openai/gpt-4o-mini
 cheetahclaws --model requesty/claude-sonnet-4-6       # managed policy ID
 ```
 
-[Runcrate](https://www.runcrate.ai) serves open models (DeepSeek, GLM, Qwen, Kimi, gpt-oss) behind one OpenAI-compatible endpoint:
-
-```bash
-export RUNCRATE_API_KEY=rc_live_...
-cheetahclaws --model runcrate/deepseek-ai/DeepSeek-V4.1-Flash
-```
+Runcrate (`runcrate/<vendor>/<model>`, open models) is set up the same way — see [usage.md](docs/guides/usage.md#runcrate-open-models-one-key).
 
 **AWS Bedrock / Azure / Vertex** use the `litellm/<provider>/<model>` form (`pip install ".[litellm]"`) — full env-var recipes in [recipes.md](docs/guides/recipes.md#alternative-cloud-providers-with-non-trivial-auth-via-the-litellm-provider).
 

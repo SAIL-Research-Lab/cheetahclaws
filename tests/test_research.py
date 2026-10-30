@@ -417,6 +417,37 @@ def test_serply_scholar_parses_citations_and_year(monkeypatch):
     assert (rs[1].engagement_raw, rs[1].published, rs[1].author) == (0, "2019-01-01", "J Doe")
 
 
+def test_serply_scholar_tolerates_unexpected_field_types(monkeypatch):
+    # A TypeError here would make the aggregator retry without time_range,
+    # spending a second API request — so odd shapes must parse, not raise.
+    from cheetahclaws.research.sources import serply_scholar as sps
+
+    monkeypatch.setenv("SERPLY_API_KEY", "k")
+    fixture = {"articles": [
+        {"title": "Int count", "link": "https://example.org/a",
+         "author": "A Writer - Venue, 2021 - example.org",
+         "extras": {"citations": {"count": 42, "link": None}},
+         "doc": "not-a-dict"},
+        {"title": "Odd authors", "link": "https://example.org/b",
+         "author": {"names": None, "authors": [None, {"name": 7}, {"name": "B Real"}]},
+         "extras": {"citations": {"count": None}}},
+        "not-an-article",
+        {"title": None, "link": "https://example.org/c"},
+    ]}
+    with mock.patch("cheetahclaws.research.sources.serply_scholar.get",
+                    return_value=fixture):
+        rs = sps.search("q", 5, {})
+    assert [r.title for r in rs] == ["Int count", "Odd authors"]
+    assert rs[0].engagement_raw == 42
+    assert rs[0].extra == {"pdf_url": "", "cites_url": ""}
+    assert (rs[1].author, rs[1].engagement_raw) == ("B Real", 0)
+
+    for bad in ([], {"articles": None}, {"articles": {"x": 1}}):
+        with mock.patch("cheetahclaws.research.sources.serply_scholar.get",
+                        return_value=bad):
+            assert sps.search("q", 5, {}) == []
+
+
 def test_sec_edgar_builds_filing_url():
     from cheetahclaws.research.sources import sec_edgar
     fixture = {"hits": {"hits": [{
