@@ -258,6 +258,10 @@ class ChatSession:
     for fast replay; event queue/buffer stay in-memory only.
     """
 
+    # Owner baseline defaults (overwritten in __init__ from base_config).
+    _owner_permission_mode = "auto"
+    _owner_tool_profile = None
+
     def __init__(self, base_config: dict, user_id: int, *,
                  session_id: Optional[str] = None,
                  title: Optional[str] = None):
@@ -338,12 +342,19 @@ class ChatSession:
 
     def _profile_allowed(self, profile) -> bool:
         """May a non-admin use this tool_profile? Every profile is a subset
-        of "full" and a superset of "standard"."""
+        of "full" and a superset of "standard". An unknown profile name is
+        let through here so update_config reports it as a ValueError (400)."""
         try:
             from cheetahclaws.tool_registry import normalize_tool_profile
+        except ImportError:
+            return False
+        try:
             want = normalize_tool_profile(profile)
+        except ValueError:
+            return True
+        try:
             owner = normalize_tool_profile(self._owner_tool_profile)
-        except (ImportError, ValueError):
+        except ValueError:
             return False
         return want == owner or want == "standard" or owner == "full"
 
