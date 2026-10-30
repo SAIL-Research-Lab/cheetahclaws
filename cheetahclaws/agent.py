@@ -20,6 +20,7 @@ from cheetahclaws import logging_utils as _log
 from cheetahclaws import quota as _quota
 from cheetahclaws.circuit_breaker import CircuitOpenError as _CircuitOpenError
 from cheetahclaws import runtime
+from cheetahclaws import hooks as _hooks
 
 # ── Re-export event types (used by cheetahclaws.py) ────────────────────────
 __all__ = [
@@ -38,18 +39,26 @@ class AgentState:
     total_cache_read_tokens:  int = 0
     total_cache_write_tokens: int = 0
     turn_count: int = 0
+    # Why the most recent run() returned: "completed", "max_turns",
+    # "loop_guard", "api_error", "quota", "cancelled", "interrupted",
+    # "hook_blocked" (UserPromptSubmit) or "hook_stopped" (continue=false).
+    # Empty while a run is in progress.
+    exit_reason: str = ""
 
 
 @dataclass
 class ToolStart:
     name:   str
     inputs: dict
+    id:     str = ""          # provider tool_call id (pairs with ToolEnd.id)
 
 @dataclass
 class ToolEnd:
     name:      str
     result:    str
     permitted: bool = True
+    id:        str = ""
+    is_error:  bool = False
 
 @dataclass
 class TurnDone:
@@ -64,6 +73,16 @@ class PermissionRequest:
     # "Bash:git push" or "Edit:/repo/src/app.py". Empty when the front end
     # should offer approve/reject only. See agent._permission_signature.
     signature: str = ""
+    # Structured view of the call, for front ends that decide by policy
+    # instead of asking a human (headless mode's --allowed-tools).
+    tool_name:  str = ""
+    tool_input: dict | None = None
+    tool_id:    str = ""
+    # Set by the front end alongside granted=False to explain the denial to
+    # the model (e.g. "non-interactive session"); default text otherwise.
+    deny_reason: str = ""
+    # Who decided ("user", "headless", "allowed_tools" …) — for the event log.
+    decided_by: str = ""
 
 @dataclass
 class QuotaPause:
@@ -97,7 +116,41 @@ def run(
     Args:
         depth: sub-agent nesting depth, 0 for top-level
         cancel_check: callable returning True to abort the loop early
+
+    Config keys honored here (all optional):
+        max_turns: cap on model calls in this run() (top level only);
+            exceeding it ends the loop with state.exit_reason="max_turns".
+        _event_emitter: an event_log.EventEmitter; structured events
+            (tool_call, tool_result, permission_decision, usage …) are sent
+            to it.  Absent → no events, zero overhead.
     """
+    state.exit_reason = ""
+    _session_key = config.get("_session_id", "default")
+
+    # ── UserPromptSubmit hooks (top level only) ───────────────────────────
+    # A hook may block the prompt outright or attach extra context to it.
+    if depth == 0 and isinstance(user_message, str):
+        _extra_ctx = _hooks.pop_session_context(_session_key)
+        if _hooks.has_hooks("UserPromptSubmit"):
+            _hr = _hooks.run_hooks("UserPromptSubmit", {"prompt": user_message},
+                                   config=config)
+            if _hr.blocked:
+                _why = _hr.reason or "blocked by a UserPromptSubmit hook"
+                _emit(config, "notice", text=f"prompt blocked: {_why}")
+                yield TextChunk(f"\n[Prompt blocked by hook: {_why}]\n")
+                state.exit_reason = "hook_blocked"
+                return
+            if _hr.halt:
+                yield TextChunk(f"\n[Stopped by hook: {_hr.stop_reason}]\n")
+                state.exit_reason = "hook_stopped"
+                return
+            if _hr.additional_context:
+                _extra_ctx = (_extra_ctx + "\n" + _hr.additional_context).strip()
+        _emit(config, "user_message", text=user_message)
+        if _extra_ctx:
+            user_message = (f"{user_message}\n\n<hook-context>\n{_extra_ctx}\n"
+                            f"</hook-context>")
+
     # Append user turn in neutral format
     user_msg = {"role": "user", "content": user_message}
     # Attach pending image from /image command if present
@@ -146,15 +199,37 @@ def run(
     _readonly_sigs_seen: set[str] = set()
     _READ_ONLY_TOOLS = {"Read", "Glob", "Grep", "WebFetch", "WebSearch"}
 
+    # Turn cap (None = unlimited, the historical behaviour).  Sub-agents run
+    # their own loops with their own budgets, so the cap is top-level only.
+    _max_turns = _parse_max_turns(config.get("max_turns")) if depth == 0 else None
+    _turns_this_run = 0
+
+    # Stop hooks may force the agent to keep going; bounded so a hook that
+    # always says "continue" can't spin forever.
+    _stop_continues = 0
+    _stop_continue_limit = _parse_max_turns(
+        config.get("stop_hook_max_continues")) or _STOP_HOOK_MAX_CONTINUES
+
     while True:
         if cancel_check and cancel_check():
+            state.exit_reason = "cancelled"
             return
+        if _max_turns is not None and _turns_this_run >= _max_turns:
+            state.exit_reason = "max_turns"
+            _emit(config, "notice", text=f"reached max_turns={_max_turns}")
+            yield TextChunk(f"\n[Stopped: reached max_turns={_max_turns}]\n")
+            break
+        _turns_this_run += 1
         state.turn_count += 1
         assistant_turn: AssistantTurn | None = None
 
         # Compact context if approaching window limit
         try:
-            maybe_compact(state, config)
+            if _hooks.has_hooks("PreCompact") and _needs_compaction(state, config):
+                _hooks.run_hooks("PreCompact", {"trigger": "auto"},
+                                 match_value="auto", config=config)
+            if maybe_compact(state, config):
+                _emit(config, "compaction", trigger="auto")
         except Exception as _compact_err:
             _log.warn("compact_failed", error=str(_compact_err))
 
@@ -229,6 +304,8 @@ def run(
                                projected_tokens=_proj_tokens, projected_cost=_proj_cost)
         except _quota.QuotaExceeded as qe:
             _log.warn("quota_exceeded", session_id=session_id, reason=qe.reason)
+            _emit(config, "notice", text=f"budget reached: {qe.reason}")
+            state.exit_reason = "quota"
             yield QuotaPause(qe.reason, _quota.get_usage(session_id),
                              key=qe.key, scope=qe.scope, unit=qe.unit, limit=qe.limit)
             break
@@ -262,6 +339,8 @@ def run(
                     config=_call_config,
                 ):
                     if isinstance(event, (TextChunk, ThinkingChunk)):
+                        if depth == 0 and isinstance(event, TextChunk):
+                            _emit(config, "assistant_delta", text=event.text)
                         yield event
                     elif isinstance(event, AssistantTurn):
                         assistant_turn = event
@@ -277,6 +356,8 @@ def run(
             except _CircuitOpenError as e:
                 _log.warn("circuit_open_skip", session_id=session_id,
                           error=str(e)[:200])
+                _emit(config, "error", message=str(e)[:500], category="circuit_open")
+                state.exit_reason = "api_error"
                 yield TextChunk(f"\n[{e}]\n")
                 return  # circuit manages its own cooldown — don't retry
 
@@ -315,6 +396,9 @@ def run(
                                category=cerr.category.value,
                                error=_truncate_err(str(e)))
                     hint = f" Hint: {cerr.hint}" if cerr.hint else ""
+                    _emit(config, "error",
+                          message=f"{type(e).__name__}: {_truncate_err(str(e), 500)}",
+                          category=cerr.category.value, hint=cerr.hint or "")
                     yield TextChunk(f"\n[Failed — {type(e).__name__}: {_truncate_err(str(e))}.{hint}]\n")
                     break
 
@@ -345,7 +429,11 @@ def run(
                                 f"{attempt+1}/{max_retries})]\n"
                             )
                             continue
+                    if _hooks.has_hooks("PreCompact"):
+                        _hooks.run_hooks("PreCompact", {"trigger": "auto"},
+                                         match_value="auto", config=config)
                     _force_compact(state, config)
+                    _emit(config, "compaction", trigger="overflow")
                     yield TextChunk(f"\n[Context too long — compacted and retrying (attempt {attempt+1}/{max_retries})]\n")
                     continue
 
@@ -361,6 +449,7 @@ def run(
                 time.sleep(backoff)
 
         if assistant_turn is None:
+            state.exit_reason = "api_error"
             break
 
         # Record assistant turn in neutral format
@@ -381,6 +470,17 @@ def run(
         state.total_output_tokens += assistant_turn.out_tokens
         state.total_cache_read_tokens  += getattr(assistant_turn, 'cache_read_tokens', 0)
         state.total_cache_write_tokens += getattr(assistant_turn, 'cache_write_tokens', 0)
+        _emit_d(config, depth, "assistant_message",
+                text=assistant_turn.text or "",
+                tool_calls=[{"id": tc.get("id", ""), "name": tc.get("name", "")}
+                            for tc in (assistant_turn.tool_calls or [])],
+                model=config.get("model", ""))
+        _emit_d(config, depth, "usage",
+                input_tokens=assistant_turn.in_tokens,
+                output_tokens=assistant_turn.out_tokens,
+                cache_read_tokens=getattr(assistant_turn, 'cache_read_tokens', 0),
+                cache_write_tokens=getattr(assistant_turn, 'cache_write_tokens', 0),
+                model=config.get("model", ""))
         yield TurnDone(assistant_turn.in_tokens, assistant_turn.out_tokens)
 
         if not assistant_turn.tool_calls:
@@ -402,6 +502,31 @@ def run(
                            session_id=session_id,
                            reason="user_provided_path_but_assistant_text_only")
                 continue   # retry the loop with the nudge in history
+            # Stop hooks: a hook may refuse to let the agent stop yet
+            # ("decision": "block" / exit 2) and say why; that reason goes
+            # back to the model as a user turn.  Bounded per run().
+            if depth == 0 and _hooks.has_hooks("Stop"):
+                _hr = _hooks.run_hooks(
+                    "Stop",
+                    {"stop_hook_active": _stop_continues > 0,
+                     "last_assistant_message": assistant_turn.text or ""},
+                    config=config)
+                if _hr.halt:
+                    state.exit_reason = "hook_stopped"
+                    break
+                if _hr.blocked:
+                    if _stop_continues < _stop_continue_limit:
+                        _stop_continues += 1
+                        _why = _hr.reason or "A Stop hook asked you to keep working."
+                        state.messages.append({
+                            "role": "user",
+                            "content": f"[Stop hook] {_why}",
+                        })
+                        yield TextChunk(f"\n[Stop hook: continuing — {_why}]\n")
+                        continue
+                    _log.warn("stop_hook_continue_limit",
+                              session_id=session_id, limit=_stop_continue_limit)
+            state.exit_reason = "completed"
             break   # No tools → conversation turn complete
 
         # ── Execute tools (parallel when safe) ────────────────────────────
@@ -446,6 +571,7 @@ def run(
             state.messages.append({
                 "role": "assistant", "content": _loop_msg.strip(),
             })
+            state.exit_reason = "loop_guard"
             break
 
         # Read-only dedup: walk the batch first, mark any read-only call
@@ -479,8 +605,19 @@ def run(
             else:
                 _readonly_sigs_seen.add(_ro_sig)
 
-        # Check permissions first (must be sequential — may prompt user)
+        for tc in tool_calls:
+            _emit_d(config, depth, "tool_call", id=tc.get("id", ""),
+                    name=tc.get("name", ""), input=tc.get("input", {}))
+
+        # Check permissions first (must be sequential — may prompt user).
+        # PreToolUse hooks run first: they may rewrite the input, allow
+        # (skip the prompt), deny (with a reason fed to the model), or force
+        # a prompt ("ask").
         permissions: dict[str, bool] = {}
+        _deny_reasons: dict[str, str] = {}
+        _hook_halt_reason = ""
+        _pre_hooks_on = _hooks.has_hooks("PreToolUse")
+        _plan_mode = config.get("permission_mode") == "plan"
         for tc in tool_calls:
             if tc["name"] not in active_tool_names:
                 # Treat a stale/malicious call as an execution error, not a
@@ -488,17 +625,63 @@ def run(
                 # on this turn, so prompting a user for it would be misleading.
                 permissions[tc["id"]] = True
                 continue
-            permitted = _check_permission(tc, config)
+            _hook_decision = None
+            if _pre_hooks_on and tc["id"] not in _redundant_tcs:
+                _hr = _hooks.run_hooks(
+                    "PreToolUse",
+                    {"tool_name": tc["name"], "tool_input": tc.get("input") or {},
+                     "tool_use_id": tc["id"]},
+                    match_value=tc["name"], config=config)
+                if isinstance(_hr.updated_input, dict):
+                    tc["input"] = _hr.updated_input
+                if _hr.halt and not _hook_halt_reason:
+                    _hook_halt_reason = _hr.stop_reason or "stopped by hook"
+                _hook_decision = _hr.decision
+                if _hook_decision == "deny":
+                    permissions[tc["id"]] = False
+                    _deny_reasons[tc["id"]] = (
+                        "Denied by PreToolUse hook: "
+                        + (_hr.reason or "operation blocked by policy"))
+                    _emit_d(config, depth, "permission_decision", id=tc["id"],
+                            name=tc["name"], decision="deny", source="hook",
+                            reason=_hr.reason)
+                    continue
+                if _hook_decision == "allow" and not _plan_mode:
+                    permissions[tc["id"]] = True
+                    _emit_d(config, depth, "permission_decision", id=tc["id"],
+                            name=tc["name"], decision="allow", source="hook",
+                            reason=_hr.reason)
+                    continue
+            permitted = (False if _hook_decision == "ask"
+                         else _check_permission(tc, config))
             if not permitted:
-                if config.get("permission_mode") == "plan":
+                if _plan_mode and _hook_decision != "ask":
                     permitted = False
+                    _emit_d(config, depth, "permission_decision", id=tc["id"],
+                            name=tc["name"], decision="deny", source="plan_mode")
                 else:
                     req = PermissionRequest(
                         description=_permission_desc(tc),
                         signature=_permission_signature(tc),
+                        tool_name=tc["name"],
+                        tool_input=tc.get("input") or {},
+                        tool_id=tc["id"],
                     )
+                    _hooks.fire_and_forget(
+                        "Notification",
+                        {"message": f"CheetahClaws needs your permission to use "
+                                    f"{tc['name']}: {req.description[:200]}",
+                         "notification_type": "permission_prompt"},
+                        config=config)
                     yield req
                     permitted = req.granted
+                    if not permitted and req.deny_reason:
+                        _deny_reasons[tc["id"]] = req.deny_reason
+                    _emit_d(config, depth, "permission_decision", id=tc["id"],
+                            name=tc["name"],
+                            decision="allow" if permitted else "deny",
+                            source=req.decided_by or "user",
+                            reason=req.deny_reason if not permitted else "")
             permissions[tc["id"]] = permitted
 
         # Determine which tools can run in parallel — but treat redundant
@@ -535,7 +718,9 @@ def run(
                 return tc, _redundant_tcs[tid], True
             permitted = permissions[tid]
             if not permitted:
-                if config.get("permission_mode") == "plan":
+                if tid in _deny_reasons:
+                    result = _deny_reasons[tid]
+                elif config.get("permission_mode") == "plan":
                     plan_file = runtime.get_ctx(config).plan_file or ""
                     result = (
                         f"[Plan mode] Write operations are blocked except to the plan file: {plan_file}\n"
@@ -552,57 +737,90 @@ def run(
                 )
             return tc, result, permitted
 
-        results_ordered = []
+        # Results are collected by id and emitted/appended in the model's
+        # original call order below, whichever batch produced them.
+        results_by_id: dict[str, tuple] = {}
 
-        # Run parallel batch concurrently
-        if parallel_batch:
-            from concurrent.futures import ThreadPoolExecutor
-            for tc in parallel_batch:
-                yield ToolStart(tc["name"], tc["input"])
-            with ThreadPoolExecutor(max_workers=min(len(parallel_batch), 8)) as pool:
-                futures = {pool.submit(_exec_one, tc): tc for tc in parallel_batch}
-                for future in futures:
-                    tc, result, permitted = future.result()
-                    _log.debug("tool_end", session_id=session_id,
-                               tool=tc["name"], permitted=permitted,
-                               result_len=len(result))
-                    results_ordered.append((tc, result, permitted))
+        try:
+            # Run parallel batch concurrently
+            if parallel_batch:
+                from concurrent.futures import ThreadPoolExecutor
+                for tc in parallel_batch:
+                    yield ToolStart(tc["name"], tc["input"], id=tc["id"])
+                pool = ThreadPoolExecutor(max_workers=min(len(parallel_batch), 8))
+                futures = [(tc, pool.submit(_exec_one, tc)) for tc in parallel_batch]
+                try:
+                    for tc, future in futures:
+                        _tc, result, permitted = future.result()
+                        _log.debug("tool_end", session_id=session_id,
+                                   tool=tc["name"], permitted=permitted,
+                                   result_len=len(result))
+                        results_by_id[tc["id"]] = (tc, result, permitted)
+                except BaseException:
+                    # Ctrl-C (or anything else): don't wait for the remaining
+                    # threads — cancel what hasn't started, keep what finished.
+                    pool.shutdown(wait=False, cancel_futures=True)
+                    for tc, future in futures:
+                        if (tc["id"] not in results_by_id and future.done()
+                                and not future.cancelled()
+                                and future.exception() is None):
+                            results_by_id[tc["id"]] = future.result()
+                    raise
+                pool.shutdown(wait=True)
 
-        # Run sequential batch one by one
-        for tc in sequential_batch:
-            if tc["id"] not in _redundant_tcs:
-                yield ToolStart(tc["name"], tc["input"])
-                _log.debug("tool_start", session_id=session_id,
-                           tool=tc["name"], input_keys=list(tc["input"].keys()))
-            else:
-                # Tell the user *something* happened, but tersely — don't
-                # repeat the full ⚙ Read(<long path>) line.
-                yield TextChunk(f"\n[deduped {tc['name']}: already in context]\n")
-            tc, result, permitted = _exec_one(tc)
-            _log.debug("tool_end", session_id=session_id,
-                       tool=tc["name"], permitted=permitted,
-                       result_len=len(result))
-            results_ordered.append((tc, result, permitted))
+            # Run sequential batch one by one
+            for tc in sequential_batch:
+                if tc["id"] not in _redundant_tcs:
+                    yield ToolStart(tc["name"], tc["input"], id=tc["id"])
+                    _log.debug("tool_start", session_id=session_id,
+                               tool=tc["name"], input_keys=list(tc["input"].keys()))
+                else:
+                    # Tell the user *something* happened, but tersely — don't
+                    # repeat the full ⚙ Read(<long path>) line.
+                    yield TextChunk(f"\n[deduped {tc['name']}: already in context]\n")
+                tc, result, permitted = _exec_one(tc)
+                _log.debug("tool_end", session_id=session_id,
+                           tool=tc["name"], permitted=permitted,
+                           result_len=len(result))
+                results_by_id[tc["id"]] = (tc, result, permitted)
+        except KeyboardInterrupt:
+            # Keep history valid: every tool_call in the assistant message
+            # must get a tool_result, so record the finished ones and mark
+            # the rest as interrupted before propagating the interrupt.
+            for tc in tool_calls:
+                if tc["id"] in results_by_id:
+                    _tc, result, permitted = results_by_id[tc["id"]]
+                    is_err = _result_is_error(result, permitted)
+                else:
+                    result, is_err = _INTERRUPTED_RESULT, True
+                state.messages.append(_tool_message(tc, result, is_err))
+                _emit_d(config, depth, "tool_result", id=tc["id"],
+                        name=tc["name"], is_error=is_err,
+                        output=_event_output(config, result))
+            state.exit_reason = "interrupted"
+            raise
+
+        results_ordered = [results_by_id[tc["id"]] for tc in tool_calls]
+        _post_hooks_on = _hooks.has_hooks("PostToolUse")
 
         # Yield results and append to state in original order
         _all_errors = bool(results_ordered)
         for tc, result, permitted in results_ordered:
+            is_err = _result_is_error(result, permitted)
             # Suppress the visible ToolEnd for deduped calls — the brief
             # `[deduped ...]` line above is enough. The tool_result still
             # gets appended to state.messages so the next API request has
             # a valid tool_calls ↔ tool_response pairing.
             if tc["id"] not in _redundant_tcs:
-                yield ToolEnd(tc["name"], result, permitted)
+                yield ToolEnd(tc["name"], result, permitted, id=tc["id"],
+                              is_error=is_err)
             # Auto-fanout: when a single tool result is too big to fit in the
             # active model's context window, split it across parallel sub-LLM
             # summaries instead of letting the next API call overflow.  Only
             # fires for permitted, oversize, non-error results — denials and
             # error strings are tiny and would just waste sub-calls.
             if permitted and isinstance(result, str):
-                _res_low = result.lstrip()[:24].lower()
-                _is_err = (_res_low.startswith("error")
-                           or _res_low.startswith("denied"))
-                if not _is_err:
+                if not is_err:
                     try:
                         from cheetahclaws.multi_agent.fanout import (
                             should_fanout, fanout_summarize, make_llm_caller,
@@ -645,19 +863,39 @@ def run(
                                    tool=tc["name"],
                                    error_type=type(_fanout_err).__name__,
                                    error=_truncate_err(str(_fanout_err)))
-            state.messages.append({
-                "role":         "tool",
-                "tool_call_id": tc["id"],
-                "name":         tc["name"],
-                "content":      result,
-            })
+            # PostToolUse hooks: may append feedback the model sees with the
+            # result (e.g. lint output after an Edit), or halt the run.
+            if (_post_hooks_on and permitted and tc["id"] not in _redundant_tcs
+                    and tc["name"] in active_tool_names):
+                _hr = _hooks.run_hooks(
+                    "PostToolUse",
+                    {"tool_name": tc["name"], "tool_input": tc.get("input") or {},
+                     "tool_use_id": tc["id"], "tool_response": result,
+                     "is_error": is_err},
+                    match_value=tc["name"], config=config)
+                _fb = _hr.additional_context or (_hr.reason if _hr.blocked else "")
+                if _fb and isinstance(result, str):
+                    result = f"{result}\n\n[PostToolUse hook feedback]\n{_fb}"
+                if _hr.halt and not _hook_halt_reason:
+                    _hook_halt_reason = _hr.stop_reason or "stopped by hook"
+            state.messages.append(_tool_message(tc, result, is_err))
+            _emit_d(config, depth, "tool_result", id=tc["id"], name=tc["name"],
+                    is_error=is_err, output=_event_output(config, result))
             # Loop guard: track whether this batch was all errors.
             res_str = result if isinstance(result, str) else str(result)
             res_low = res_str.lstrip()[:24].lower()
+            # (String-based on purpose: a plan-mode block is is_error for the
+            # model but must not trip the runaway-loop guard.)
             if not (res_low.startswith("error")
                     or res_low.startswith("denied")
                     or "keyerror" in res_low):
                 _all_errors = False
+
+        if _hook_halt_reason:
+            _emit(config, "notice", text=f"stopped by hook: {_hook_halt_reason}")
+            yield TextChunk(f"\n[Stopped by hook: {_hook_halt_reason}]\n")
+            state.exit_reason = "hook_stopped"
+            break
 
         # Loop guard: cross-tool consecutive-error counter — break if
         # the model keeps invoking tools that all fail (e.g. cycling
@@ -684,10 +922,90 @@ def run(
             state.messages.append({
                 "role": "assistant", "content": _err_msg.strip(),
             })
+            state.exit_reason = "loop_guard"
             break
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────
+
+_STOP_HOOK_MAX_CONTINUES = 3
+_INTERRUPTED_RESULT = "Error: interrupted by user before this tool call completed."
+
+
+def _emit(config: dict, etype: str, **fields) -> None:
+    """Send a structured event to the session's EventEmitter, if any.
+    Never raises — observability must not break the loop."""
+    em = config.get("_event_emitter")
+    if em is None:
+        return
+    try:
+        em.emit(etype, **fields)
+    except Exception:
+        pass
+
+
+def _emit_d(config: dict, depth: int, etype: str, **fields) -> None:
+    """_emit, tagging events from sub-agent loops with their depth."""
+    if config.get("_event_emitter") is None:
+        return
+    if depth:
+        fields["depth"] = depth
+    _emit(config, etype, **fields)
+
+
+def _event_output(config: dict, result) -> str:
+    em = config.get("_event_emitter")
+    limit = getattr(em, "max_output_chars", 4000)
+    s = result if isinstance(result, str) else str(result)
+    if limit and len(s) > limit:
+        return s[:limit] + f"\n… [truncated {len(s) - limit} chars]"
+    return s
+
+
+def _parse_max_turns(value) -> int | None:
+    """Positive int or None (unset / 0 / garbage → unlimited)."""
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return None
+    return n if n > 0 else None
+
+
+def _needs_compaction(state: AgentState, config: dict) -> bool:
+    """Mirror of maybe_compact's trigger, used only to decide whether to fire
+    PreCompact hooks (so hook-less sessions skip the token estimate)."""
+    try:
+        limit = get_context_limit(config.get("model", ""), config)
+        return estimate_tokens(state.messages) > limit * 0.7
+    except Exception:
+        return False
+
+
+def _result_is_error(result, permitted: bool) -> bool:
+    """Structured error flag for a tool result.
+
+    Denials are errors from the model's point of view.  Otherwise tools
+    report failure by convention with an "Error…" / "Denied…" prefix.
+    """
+    if not permitted:
+        return True
+    if not isinstance(result, str):
+        return False
+    head = result.lstrip()[:24].lower()
+    return head.startswith("error") or head.startswith("denied")
+
+
+def _tool_message(tc: dict, result, is_error: bool) -> dict:
+    msg = {
+        "role":         "tool",
+        "tool_call_id": tc["id"],
+        "name":         tc["name"],
+        "content":      result,
+    }
+    if is_error:
+        msg["is_error"] = True
+    return msg
+
 
 # Tools that mutate only CheetahClaws' own session state — task lists, saved
 # memories, loaded skill text, a sleep timer.  They touch nothing in the
