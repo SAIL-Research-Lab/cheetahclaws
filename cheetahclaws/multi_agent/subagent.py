@@ -450,22 +450,48 @@ def _create_worktree(base_dir: str) -> tuple:
     return wt_path, branch
 
 
-def _remove_worktree(wt_path: str, branch: str, base_dir: str) -> None:
-    """Remove a git worktree and delete its branch (best-effort)."""
+def _remove_worktree(wt_path: str, branch: str, base_dir: str) -> str:
+    """Clean up a sub-agent worktree without destroying its work (best-effort).
+
+    The sub-agent is told to commit before finishing, so its branch is the
+    deliverable: it is deleted only when it holds no commits beyond the base
+    HEAD, and the worktree is removed only when it has no uncommitted changes.
+    Returns a note for the task result naming whatever was kept ("" if all
+    of it was cleaned up).
+    """
+    def _git(*args, cwd=base_dir):
+        return subprocess.run(["git", *args], cwd=cwd,
+                              capture_output=True, text=True)
+
+    kept = []
     try:
-        subprocess.run(
-            ["git", "worktree", "remove", "--force", wt_path],
-            cwd=base_dir, capture_output=True,
-        )
+        dirty = bool(_git("status", "--porcelain", cwd=wt_path).stdout.strip())
     except Exception:
-        pass
+        dirty = False
+    if dirty:
+        kept.append(f"worktree {wt_path} (uncommitted changes)")
+    else:
+        try:
+            _git("worktree", "remove", "--force", wt_path)
+        except Exception:
+            pass
     try:
-        subprocess.run(
-            ["git", "branch", "-D", branch],
-            cwd=base_dir, capture_output=True,
-        )
+        has_commits = bool(_git("rev-list", "--count", f"HEAD..{branch}")
+                           .stdout.strip() not in ("", "0"))
     except Exception:
-        pass
+        has_commits = True   # unsure → keep it
+    if has_commits or dirty:
+        kept.append(f"branch {branch}")
+    else:
+        try:
+            _git("branch", "-D", branch)
+        except Exception:
+            pass
+    if not kept:
+        return ""
+    return ("\n\n[Sub-agent work kept for review: " + "; ".join(kept)
+            + f". Merge with `git merge {branch}` or discard with "
+            f"`git worktree remove --force {wt_path}; git branch -D {branch}`.]")
 
 
 # ── Internal helpers ───────────────────────────────────────────────────────
@@ -650,7 +676,9 @@ class SubAgentManager:
                 task.result = f"Error: {e}"
             finally:
                 if worktree_path:
-                    _remove_worktree(worktree_path, worktree_branch, base_dir)
+                    note = _remove_worktree(worktree_path, worktree_branch, base_dir)
+                    if note:
+                        task.result = (task.result or "") + note
 
         task._future = self._pool.submit(_run)
         return task
