@@ -3,10 +3,13 @@
 CheetahClaws — A Fast, Easy-to-Use, Python-Native Personal AI Assistant for Any Model, Built to Work for You Autonomously 24/7.
 
 Usage:
-  python cheetahclaws.py [options] [prompt]
+  cheetahclaws [options] [prompt]          interactive REPL (prompt runs first)
+  cheetahclaws -p [options] "<prompt>"     headless: print the answer and exit
+  cheetahclaws exec [options] "<prompt>"   same as -p (stdin is appended when piped)
+  cheetahclaws replay [session-id|last]    show a past session's event timeline
 
 Options:
-  -p, --print          Non-interactive: run prompt and exit (also --print-output)
+  -p, --print          Headless: run prompt and exit (also --print-output)
   -m, --model MODEL    Override model
   --accept-all         Never ask permission for this session (dangerous)
   --auto               Autonomous: run the whole task without approval prompts
@@ -14,6 +17,18 @@ Options:
   --ask                Turn approval prompts back on for this run
   --verbose            Show thinking + token counts
   --version            Print version and exit
+
+Headless options (-p / exec):
+  --output-format F    text (default) | json | stream-json (JSONL events)
+  --max-turns N        Stop after N model turns (exit code 2)
+  --permission-mode M  auto | accept-edits | accept-all | manual | plan
+  --allowed-tools R    Approve without asking, e.g. "Read,Edit,Bash(pytest:*)"
+  --disallowed-tools R Hide/deny tools, e.g. "WebFetch,Bash(rm:*)"
+  --resume ID          Continue a saved session;  --continue: the latest one
+  --on-permission-denied continue|stop   What to do when an approval is needed
+  --no-event-log       Don't write ~/.cheetahclaws/sessions/<id>/events.jsonl
+  Exit codes: 0 done, 1 error, 2 stopped (max turns / denied / budget / hook)
+  Hooks: ~/.cheetahclaws/settings.json (see docs/guides/hooks.md)
 
 Slash commands in REPL:
   /help       Show this help
@@ -1094,6 +1109,35 @@ def _start_headless_bridges(config: dict) -> None:
 
 # ── Main REPL ──────────────────────────────────────────────────────────────
 
+def _attach_session_observability(config: dict, session_id: str) -> None:
+    """REPL side of the session event log + lifecycle hooks.
+
+    Attaches an EventEmitter (``config["_event_emitter"]``, stripped from
+    saved config by the leading underscore) so agent.run records this session
+    to ~/.cheetahclaws/sessions/<id>/events.jsonl, fires SessionStart hooks,
+    and registers SessionEnd for interpreter exit. Best-effort: never raises.
+    """
+    try:
+        from cheetahclaws import event_log as _event_log, hooks as _hooks_mod
+        emitter = _event_log.make_emitter(session_id, config)
+        config["_event_emitter"] = emitter
+        emitter.emit("session_start", model=config.get("model", ""),
+                     cwd=os.getcwd(), mode="repl",
+                     permission_mode=config.get("permission_mode", "auto"))
+        _hooks_mod.session_start(config, source="startup")
+
+        def _on_exit():
+            try:
+                _hooks_mod.session_end(config, reason="exit")
+                emitter.emit("session_end", reason="exit")
+                emitter.close()
+            except Exception:
+                pass
+        atexit.register(_on_exit)
+    except Exception:
+        pass
+
+
 def repl(config: dict, initial_prompt: str = None):
     from cheetahclaws.config import HISTORY_FILE
     from cheetahclaws.context import build_system_prompt
@@ -1132,6 +1176,7 @@ def repl(config: dict, initial_prompt: str = None):
     ckpt.cleanup_old_sessions()
     # Initial snapshot: capture the "blank slate" before any prompts
     ckpt.make_snapshot(session_id, state, config, "(initial state)", tracked_edits=None)
+    _attach_session_observability(config, session_id)  # event log + SessionStart/End hooks
 
     # Banner
     if not initial_prompt:
@@ -2188,9 +2233,21 @@ def main():
         from cheetahclaws.daemon.cli import main as _legacy_main
         sys.exit(_legacy_main(sys.argv[2:]))
 
+    # `cheetahclaws replay <id>` — read-only timeline of a recorded session.
+    if len(sys.argv) >= 2 and sys.argv[1] == "replay":
+        from cheetahclaws.event_log import replay_main as _replay_main
+        sys.exit(_replay_main(sys.argv[2:]))
+    # `cheetahclaws exec ...` is `cheetahclaws -p ...` (headless) spelled as
+    # a verb, for parity with `codex exec`.
+    _argv = sys.argv[1:]
+    _exec_mode = bool(_argv) and _argv[0] == "exec"
+    if _exec_mode:
+        _argv = _argv[1:]
+
     parser = argparse.ArgumentParser(
         prog="cheetahclaws",
-        description="CheetahClaws — minimal Python Claude Code implementation",
+        description=("CheetahClaws: Agent Harness Infrastructure for Long-Horizon, "
+                     "Multi-Model, and Tool-Using AI Systems"),
         add_help=False,
     )
     parser.add_argument("prompt", nargs="*", help="Initial prompt (non-interactive)")
@@ -2231,16 +2288,43 @@ def main():
     parser.add_argument("--no-auth", action="store_true",
                         help="Disable web terminal password (local use only)")
     parser.add_argument("-h", "--help", action="store_true", help="Show help")
+    from cheetahclaws import headless as _headless
+    _headless.add_arguments(parser)
 
-    args = parser.parse_args()
+    args = parser.parse_args(_argv)
+    if _exec_mode:
+        args.print_mode = True
 
     if args.version:
         print(f"cheetahclaws v{VERSION}")
         sys.exit(0)
 
     if args.help:
-        print(__doc__)
+        print(parser.format_help() if _exec_mode else __doc__)
         sys.exit(0)
+
+    # Headless: stdout carries only the result (text / json / JSONL). Point
+    # sys.stdout at stderr for everything else — setup chatter, plugin and
+    # MCP banners, warnings, tool prints — and keep the real stream for
+    # headless.run() to write the result to.
+    _result_out = None
+    if args.print_mode:
+        _result_out = sys.stdout
+        sys.stdout = sys.stderr
+    else:
+        _ignored = [f for f, v in (
+            ("--output-format", args.output_format),
+            ("--max-turns", args.max_turns),
+            ("--permission-mode", args.permission_mode),
+            ("--allowed-tools", args.allowed_tools),
+            ("--disallowed-tools", args.disallowed_tools),
+            ("--resume", args.resume),
+            ("--continue", args.continue_session),
+            ("--no-event-log", args.no_event_log),
+        ) if v]
+        if _ignored:
+            warn(f"{', '.join(_ignored)} only apply with -p / exec; ignored "
+                 f"(in the REPL use /permissions, /resume …)")
 
     if args.web:
         from cheetahclaws.config import load_config as _load_cfg, save_config as _save_cfg
@@ -2343,11 +2427,12 @@ def main():
                  f"Set {env} or run: /config {pname}_api_key=YOUR_KEY"
                  f"\n  Or run: cheetahclaws --setup")
 
-    initial = " ".join(args.prompt) if args.prompt else None
-    if args.print_mode and not initial:
-        err("--print requires a prompt argument")
-        sys.exit(1)
+    if args.print_mode:
+        # Real headless path: no REPL, no prompts on the terminal, a
+        # meaningful exit code, and a machine-readable result on stdout.
+        sys.exit(_headless.run(config, args, out=_result_out))
 
+    initial = " ".join(args.prompt) if args.prompt else None
     repl(config, initial_prompt=initial)
 
 
