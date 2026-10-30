@@ -379,7 +379,8 @@ def test_output_cap_honors_context_window_override():
     from cheetahclaws.tool_registry import _effective_output_cap
 
     model = "custom/some-local-model"
-    assert _effective_output_cap({"model": model}, 32000) == 7000
+    # Provider default (128K) scales; small overrides keep the legacy cap.
+    assert _effective_output_cap({"model": model}, 32000) == 25600
     assert _effective_output_cap({"model": model, "context_window": 16000}, 32000) == 2000
     assert _effective_output_cap({"model": model, "context_window": 24000}, 32000) == 4000
 
@@ -400,5 +401,6 @@ def test_output_cap_uses_custom_endpoint_model_limit(monkeypatch):
     )
     config = {"model": "custom/big-model", "custom_base_url": "http://endpoint/v1"}
 
-    assert _effective_output_cap(config, 32000) == 7000
+    # 131072-token window → scaled cap (10% of window at 2 chars/token).
+    assert _effective_output_cap(config, 32000) == 26214
     assert _effective_output_cap({"model": "custom/big-model"}, 32000) == 2000
