@@ -1,0 +1,134 @@
+name: "CheetahClaws"
+description: "Run the CheetahClaws coding agent headlessly (cheetahclaws exec) in a workflow — PR review, triage, fixes."
+author: "CheetahClaws"
+branding:
+  icon: "terminal"
+  color: "orange"
+
+inputs:
+  prompt:
+    description: "What the agent should do. Passed on stdin, never interpolated into a shell command."
+    required: true
+  model:
+    description: "Model id, e.g. claude-sonnet-4-6, gpt-4o, deepseek/deepseek-chat."
+    required: false
+    default: "claude-sonnet-4-6"
+  permission-mode:
+    description: "auto | accept-edits | accept-all | manual | plan. 'auto' runs reads and safe shell commands; anything else is denied (never prompts)."
+    required: false
+    default: "auto"
+  allowed-tools:
+    description: 'Extra approvals, e.g. "Bash(gh pr diff:*),Bash(pytest:*)".'
+    required: false
+    default: ""
+  disallowed-tools:
+    description: 'Tools to hide or deny, e.g. "WebFetch,Bash(git push:*)".'
+    required: false
+    default: ""
+  max-turns:
+    description: "Stop after this many model turns (exit code 2)."
+    required: false
+    default: "30"
+  working-directory:
+    description: "Directory to run in."
+    required: false
+    default: "."
+  python-version:
+    description: "Python used to install cheetahclaws."
+    required: false
+    default: "3.11"
+  cheetahclaws-version:
+    description: "pip version specifier, e.g. '==3.5.90'. Empty = latest."
+    required: false
+    default: ""
+  anthropic-api-key:
+    description: "Optional; or set ANTHROPIC_API_KEY in the step env."
+    required: false
+    default: ""
+  openai-api-key:
+    description: "Optional; or set OPENAI_API_KEY in the step env."
+    required: false
+    default: ""
+  fail-on-error:
+    description: "Fail the step when the agent exits non-zero (1 error, 2 stopped by policy / max turns)."
+    required: false
+    default: "true"
+
+outputs:
+  result:
+    description: "Path to the JSON result object (type=result) written by --output-format json."
+    value: ${{ steps.run.outputs.result }}
+  final-text:
+    description: "The agent's final answer."
+    value: ${{ steps.run.outputs.final_text }}
+  exit-code:
+    description: "0 done, 1 error, 2 stopped (max turns / permission denied / budget / hook)."
+    value: ${{ steps.run.outputs.exit_code }}
+  session-id:
+    description: "Session id; the event log is ~/.cheetahclaws/sessions/<id>/events.jsonl."
+    value: ${{ steps.run.outputs.session_id }}
+
+runs:
+  using: "composite"
+  steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install cheetahclaws
+      shell: bash
+      env:
+        CC_VERSION: ${{ inputs.cheetahclaws-version }}
+      run: python -m pip install --quiet "cheetahclaws${CC_VERSION}"
+
+    - name: Run cheetahclaws exec
+      id: run
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        CC_PROMPT: ${{ inputs.prompt }}
+        CC_MODEL: ${{ inputs.model }}
+        CC_PERMISSION_MODE: ${{ inputs.permission-mode }}
+        CC_ALLOWED: ${{ inputs.allowed-tools }}
+        CC_DISALLOWED: ${{ inputs.disallowed-tools }}
+        CC_MAX_TURNS: ${{ inputs.max-turns }}
+        CC_FAIL: ${{ inputs.fail-on-error }}
+        CC_ANTHROPIC_KEY: ${{ inputs.anthropic-api-key }}
+        CC_OPENAI_KEY: ${{ inputs.openai-api-key }}
+      run: |
+        set -uo pipefail
+        if [ -n "$CC_ANTHROPIC_KEY" ]; then export ANTHROPIC_API_KEY="$CC_ANTHROPIC_KEY"; fi
+        if [ -n "$CC_OPENAI_KEY" ]; then export OPENAI_API_KEY="$CC_OPENAI_KEY"; fi
+        args=(exec --output-format json --permission-mode "$CC_PERMISSION_MODE")
+        if [ -n "$CC_MODEL" ]; then args+=(--model "$CC_MODEL"); fi
+        if [ -n "$CC_MAX_TURNS" ]; then args+=(--max-turns "$CC_MAX_TURNS"); fi
+        if [ -n "$CC_ALLOWED" ]; then args+=(--allowed-tools "$CC_ALLOWED"); fi
+        if [ -n "$CC_DISALLOWED" ]; then args+=(--disallowed-tools "$CC_DISALLOWED"); fi
+        result="$RUNNER_TEMP/cheetahclaws-result.json"
+        printf '%s' "$CC_PROMPT" | cheetahclaws "${args[@]}" - > "$result"
+        code=$?
+        echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+        echo "result=$result" >> "$GITHUB_OUTPUT"
+        python - "$result" <<'PY'
+        import json, os, sys, uuid
+        path = sys.argv[1]
+        try:
+            res = json.load(open(path, encoding="utf-8"))
+        except Exception:
+            res = {}
+        text = res.get("final_text") or ""
+        delim = "CC_EOF_" + uuid.uuid4().hex
+        with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
+            f.write(f"session_id={res.get('session_id', '')}\n")
+            f.write(f"final_text<<{delim}\n{text}\n{delim}\n")
+        with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as f:
+            f.write("### CheetahClaws\n\n")
+            f.write(f"exit_reason: `{res.get('exit_reason', 'unknown')}` · "
+                    f"turns: {res.get('turns', '?')} · "
+                    f"cost: ${res.get('cost_usd') or 0:.4f}\n\n")
+            f.write(text + "\n")
+        PY
+        if [ "$code" -ne 0 ] && [ "$CC_FAIL" = "true" ]; then
+          echo "::error::cheetahclaws exited with code $code"
+          exit "$code"
+        fi
