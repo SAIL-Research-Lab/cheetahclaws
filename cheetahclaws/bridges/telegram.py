@@ -94,8 +94,30 @@ def _tg_send_keyboard(token: str, chat_id: int, text: str,
     return 0
 
 
+def _tg_message_authorized(msg: dict, chat_id, config: dict | None) -> bool:
+    """Shared sender check (bridges/auth.py) for one Telegram message.
+
+    Keeps the original ``chat_id`` pin and, inside that chat, requires the
+    sender to be in ``telegram_allowed_users``. A private chat with no
+    allowlist auto-binds its user as owner; in a group every member must be
+    listed explicitly (escape hatch: ``telegram_allow_all_senders``).
+    """
+    from cheetahclaws.bridges import auth as _bauth
+    chat = msg.get("chat") or {}
+    msg_chat_id = chat.get("id")
+    if msg_chat_id != chat_id:
+        return False
+    if config is None:
+        return True          # legacy callers: chat_id pin only
+    sender = (msg.get("from") or {}).get("id")
+    if sender is None and chat.get("type") == "private":
+        sender = msg_chat_id     # private chat id == user id
+    return _bauth.is_authorized("telegram", sender, msg_chat_id, config,
+                                is_private=(chat.get("type") == "private"))
+
+
 def _handle_callback_query(token: str, chat_id: int, cb: dict,
-                           session_ctx) -> None:
+                           session_ctx, config: dict | None = None) -> None:
     """Process a single inline_keyboard click.
 
     Extracted from the poll loop so it can be unit-tested in isolation.
@@ -116,7 +138,15 @@ def _handle_callback_query(token: str, chat_id: int, cb: dict,
     cb_msg  = (cb.get("message") or {}).get("message_id")
     cb_text = (cb.get("message") or {}).get("text", "") or ""
 
-    if cb_chat != chat_id:
+    unauthorized = cb_chat != chat_id
+    if not unauthorized and config is not None:
+        # A group member clicking someone else's approval keyboard must be
+        # allowlisted too — the click answers a tool-permission prompt.
+        unauthorized = not _tg_message_authorized(
+            {"chat": (cb.get("message") or {}).get("chat") or {},
+             "from": cb.get("from") or {}},
+            chat_id, config)
+    if unauthorized:
         if cb_id:
             _tg_api(token, "answerCallbackQuery",
                     {"callback_query_id": cb_id, "text": "⛔ Unauthorized"})
@@ -292,7 +322,8 @@ def _tg_poll_loop(token: str, chat_id: int, config: dict) -> str:
                 cb = update.get("callback_query")
                 if cb:
                     try:
-                        _handle_callback_query(token, chat_id, cb, session_ctx)
+                        _handle_callback_query(token, chat_id, cb, session_ctx,
+                                               config=config)
                     except Exception as _cb_exc:
                         _log.warn("bridge_callback_error",
                                   bridge="telegram", error=str(_cb_exc)[:200])
@@ -302,11 +333,20 @@ def _tg_poll_loop(token: str, chat_id: int, config: dict) -> str:
                 msg_chat_id = msg.get("chat", {}).get("id")
                 text = msg.get("text", "")
 
-                if msg_chat_id != chat_id:
-                    _tg_api(token, "sendMessage", {
-                        "chat_id": msg_chat_id,
-                        "text": "⛔ Unauthorized."
-                    })
+                if not _tg_message_authorized(msg, chat_id, config):
+                    from cheetahclaws.bridges import auth as _bauth
+                    sender = (msg.get("from") or {}).get("id")
+                    _bauth.log_refusal("telegram", sender, msg_chat_id)
+                    if msg_chat_id != chat_id:
+                        _tg_api(token, "sendMessage", {
+                            "chat_id": msg_chat_id,
+                            "text": "⛔ Unauthorized."
+                        })
+                    elif _bauth.should_reply_refusal("telegram", sender):
+                        _tg_api(token, "sendMessage", {
+                            "chat_id": msg_chat_id,
+                            "text": _bauth.refusal_text("telegram", sender),
+                        })
                     continue
 
                 # Handle photo messages

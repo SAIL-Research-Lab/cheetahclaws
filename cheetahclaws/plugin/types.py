@@ -97,19 +97,23 @@ class PluginEntry:
     install_dir: Path
     enabled: bool = True
     manifest: PluginManifest | None = None
+    commit: str = ""     # git HEAD recorded at install/update (provenance)
 
     @property
     def qualified_name(self) -> str:
         return f"{self.name}@{self.scope.value}"
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "name": self.name,
             "scope": self.scope.value,
             "source": self.source,
             "install_dir": str(self.install_dir),
             "enabled": self.enabled,
         }
+        if self.commit:
+            d["commit"] = self.commit
+        return d
 
     @classmethod
     def from_dict(cls, data: dict) -> "PluginEntry":
@@ -119,6 +123,7 @@ class PluginEntry:
             source=data.get("source", ""),
             install_dir=Path(data["install_dir"]),
             enabled=data.get("enabled", True),
+            commit=data.get("commit", ""),
         )
 
 

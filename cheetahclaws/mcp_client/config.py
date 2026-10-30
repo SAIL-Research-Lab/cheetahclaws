@@ -3,6 +3,8 @@
 Config search order (project-level overrides user-level by server name):
   1. ~/.cheetahclaws/mcp.json          — user-level, lowest priority
   2. <cwd>/.mcp.json                  — project-level, highest priority
+                                         (only once the project is trusted —
+                                         see cheetahclaws/trust.py, /trust)
 
 File format (matches Claude Code's .mcp.json format):
     {
@@ -24,7 +26,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from .types import MCPServerConfig
 
@@ -46,23 +48,42 @@ def _load_file(path: Path) -> Dict[str, dict]:
         return {}
 
 
-def load_mcp_configs() -> Dict[str, MCPServerConfig]:
-    """Return all MCP server configs, project-level overriding user-level."""
-    # User-level first (lowest priority)
-    servers: Dict[str, dict] = _load_file(USER_MCP_CONFIG)
-
-    # Walk up from cwd to find .mcp.json (up to 10 levels)
+def find_project_mcp_file() -> Optional[Path]:
+    """Walk up from cwd (up to 10 levels) to the nearest project .mcp.json."""
     p = Path.cwd()
     for _ in range(10):
         candidate = p / PROJECT_MCP_NAME
         if candidate.exists():
-            project_servers = _load_file(candidate)
-            servers.update(project_servers)   # project wins
-            break
+            return candidate
         parent = p.parent
         if parent == p:
             break
         p = parent
+    return None
+
+
+def load_mcp_configs(include_untrusted: bool = False) -> Dict[str, MCPServerConfig]:
+    """Return all MCP server configs, project-level overriding user-level.
+
+    Project-level servers are workspace-trust gated (see cheetahclaws/trust.py):
+    a stdio server in a cloned repo's .mcp.json is arbitrary code, so it is
+    only returned once the user has trusted the project and approved that
+    server's command. Skipped servers are listed by trust.pending_untrusted().
+    ``include_untrusted=True`` returns everything (for display only).
+    """
+    # User-level first (lowest priority) — always trusted.
+    servers: Dict[str, dict] = _load_file(USER_MCP_CONFIG)
+
+    candidate = find_project_mcp_file()
+    if candidate is not None:
+        project_servers = _load_file(candidate)
+        if not include_untrusted:
+            from cheetahclaws import trust as _trust
+            project_servers = {
+                name: raw for name, raw in project_servers.items()
+                if _trust.is_mcp_server_approved(candidate, name, raw)
+            }
+        servers.update(project_servers)   # project wins
 
     return {
         name: MCPServerConfig.from_dict(name, raw)

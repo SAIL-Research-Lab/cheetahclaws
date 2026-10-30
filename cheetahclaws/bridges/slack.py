@@ -143,6 +143,20 @@ def _slack_poll_loop(token: str, channel: str, config: dict) -> str:
                     continue
 
                 user_id = msg.get("user", "unknown")
+
+                # ── Sender authorization (bridges/auth.py) ─────────────────
+                # Anyone in the channel can post; only allowlisted users may
+                # answer prompts, run !shell / slash commands or agent turns.
+                # DM channel ids start with "D" (1:1 → owner auto-bind).
+                from cheetahclaws.bridges import auth as _bauth
+                if not _bauth.is_authorized("slack", msg.get("user", ""), channel, config,
+                                            is_private=str(channel).startswith("D")):
+                    _bauth.log_refusal("slack", user_id, channel)
+                    print(clr(f"\n  ⛔ Slack [{user_id}] not in slack_allowed_users — ignored", "yellow"))
+                    if _bauth.should_reply_refusal("slack", user_id):
+                        _slack_send(token, channel, _bauth.refusal_text("slack", user_id))
+                    continue
+
                 print(clr(f"\n  📩 Slack [{user_id[:8]}]: {text}", "cyan"))
 
                 evt = session_ctx.slack_input_event

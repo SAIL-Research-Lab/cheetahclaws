@@ -114,21 +114,53 @@ def get_peer_uid(sock: socket.socket) -> Optional[int]:
 # ── Token storage ────────────────────────────────────────────────────────────
 
 
+def _write_token_file(token_path: Path, token: str, *, exclusive: bool) -> None:
+    """Write ``token`` so the file is 0600 from the moment it exists.
+
+    ``write_text`` + ``chmod`` left a window where the token sat on disk with
+    the umask's (usually 0644) permissions. ``exclusive`` creates the final
+    path with O_EXCL (raises FileExistsError if another process won the race);
+    otherwise a 0600 temp file is renamed over the old token atomically.
+    """
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    target = token_path if exclusive else token_path.with_name(
+        f".{token_path.name}.{secrets.token_hex(4)}.tmp")
+    fd = os.open(str(target), flags, 0o600)
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(token)
+    except BaseException:
+        try:
+            os.unlink(target)
+        except OSError:
+            pass
+        raise
+    if not exclusive:
+        os.replace(target, token_path)
+
+
 def load_or_create_token(token_path: Path) -> str:
     if token_path.exists():
+        try:   # tighten a token left 0644 by an older build
+            if token_path.stat().st_mode & 0o077:
+                os.chmod(token_path, 0o600)
+        except OSError:
+            pass
         return token_path.read_text().strip()
     token_path.parent.mkdir(parents=True, exist_ok=True)
     token = secrets.token_urlsafe(32)
-    token_path.write_text(token)
-    os.chmod(token_path, 0o600)
+    try:
+        _write_token_file(token_path, token, exclusive=True)
+    except FileExistsError:
+        # Another process created it between exists() and open(): use theirs.
+        return token_path.read_text().strip()
     return token
 
 
 def rotate_token(token_path: Path) -> str:
     token_path.parent.mkdir(parents=True, exist_ok=True)
     token = secrets.token_urlsafe(32)
-    token_path.write_text(token)
-    os.chmod(token_path, 0o600)
+    _write_token_file(token_path, token, exclusive=False)
     return token
 
 

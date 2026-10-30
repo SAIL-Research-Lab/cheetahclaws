@@ -127,6 +127,10 @@ def list_plugins(scope: PluginScope | None = None) -> list[PluginEntry]:
         cfg = _read_cfg(_plugin_cfg_for(sc))
         for name, data in cfg.get("plugins", {}).items():
             entry = PluginEntry.from_dict(data)
+            # Scope comes from WHICH file listed the entry, never from the
+            # entry itself — a repo's plugins.json claiming "scope": "user"
+            # must not inherit user-level trust.
+            entry.scope = sc
             entry.manifest = PluginManifest.from_plugin_dir(entry.install_dir)
             entries.append(entry)
             installed_names.add(entry.name)
@@ -148,15 +152,92 @@ def get_plugin(name: str, scope: PluginScope | None = None) -> PluginEntry | Non
 
 # ── Install ───────────────────────────────────────────────────────────────────
 
+# Non-interactive consent for plugin installs (CI, scripts, bridges):
+# `/plugin install name@url --yes` or CHEETAHCLAWS_PLUGIN_INSTALL_YES=1.
+INSTALL_YES_ENV = "CHEETAHCLAWS_PLUGIN_INSTALL_YES"
+_YES_FLAGS = ("--yes", "-y")
+
+
+def _strip_yes_flag(identifier: str) -> tuple[str, bool]:
+    parts = identifier.split()
+    yes = any(p in _YES_FLAGS for p in parts)
+    return " ".join(p for p in parts if p not in _YES_FLAGS), yes
+
+
+def _env_yes() -> bool:
+    return os.environ.get(INSTALL_YES_ENV, "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _default_confirm(summary: str) -> bool:
+    """Ask on the controlling terminal; refuse when nobody can answer.
+
+    Only prompts from the main thread with a TTY stdin — a bridge/daemon
+    worker thread must never block on the server's stdin.
+    """
+    import threading
+    if threading.current_thread() is not threading.main_thread():
+        return False
+    try:
+        if not sys.stdin or not sys.stdin.isatty():
+            return False
+    except Exception:
+        return False
+    print(summary)
+    try:
+        ans = input("  Install this plugin? [y/N] ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return False
+    return ans in ("y", "yes")
+
+
+def _install_summary(name: str, source: str, manifest: PluginManifest,
+                     commit: str, missing_deps: list[str]) -> str:
+    head = f"  Plugin  : {name} {manifest.version}"
+    if manifest.description:
+        head += f"  — {manifest.description}"
+    lines = [head, f"  Source  : {source}" + (f"  @ {commit[:12]}" if commit else "")]
+    if manifest.author:
+        lines.append(f"  Author  : {manifest.author}")
+    if manifest.tools:
+        lines.append(f"  Tools   : {', '.join(manifest.tools)}  (Python, runs with your privileges)")
+    if manifest.commands:
+        lines.append(f"  Commands: {', '.join(manifest.commands)}")
+    if manifest.mcp_servers:
+        lines.append(f"  MCP     : {', '.join(manifest.mcp_servers)}")
+    if missing_deps:
+        lines.append(f"  pip     : {' '.join(missing_deps)}  (will be pip-installed)")
+    return "\n".join(lines)
+
+
+def _git_head(repo: Path) -> str:
+    try:
+        r = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(repo),
+                           capture_output=True, text=True, timeout=30)
+        return r.stdout.strip() if r.returncode == 0 else ""
+    except Exception:
+        return ""
+
+
 def install_plugin(
     identifier: str,
     scope: PluginScope = PluginScope.USER,
     force: bool = False,
+    *,
+    assume_yes: bool = False,
+    confirm=None,
 ) -> tuple[bool, str]:
     """
     Install a plugin. identifier = 'name' | 'name@git_url' | 'name@local_path'.
     Returns (success, message).
+
+    Installing from a git URL, or anything that needs pip packages, shows the
+    manifest/source/commit/deps and requires consent: ``confirm(summary) ->
+    bool`` if given, else a TTY prompt. Non-interactive callers pass
+    ``assume_yes=True``, append ``--yes`` to the identifier, or set
+    CHEETAHCLAWS_PLUGIN_INSTALL_YES=1. The cloned commit is recorded.
     """
+    identifier, flag_yes = _strip_yes_flag(identifier)
+    assume_yes = assume_yes or flag_yes or _env_yes()
     name, source = parse_plugin_identifier(identifier)
     safe_name = sanitize_plugin_name(name)
 
@@ -183,10 +264,13 @@ def install_plugin(
         if plugin_dir.exists() and force:
             shutil.rmtree(plugin_dir)
 
-        if _is_git_url(source):
+        commit = ""
+        is_git = _is_git_url(source)
+        if is_git:
             ok, msg = _clone_plugin(source, plugin_dir)
             if not ok:
                 return False, msg
+            commit = _git_head(plugin_dir)
         else:
             local_src = Path(source)
             if not local_src.exists():
@@ -197,6 +281,21 @@ def install_plugin(
         manifest = PluginManifest.from_plugin_dir(plugin_dir)
         if manifest is None:
             manifest = PluginManifest(name=safe_name, description="(no manifest)")
+
+        # Consent: nothing from the fetched tree has run yet (clone doesn't
+        # execute repo code). Ask before pip-installing or registering it.
+        missing = _missing_dependencies(manifest.dependencies) if manifest.dependencies else []
+        if (is_git or missing) and not assume_yes:
+            summary = _install_summary(safe_name, source, manifest, commit, missing)
+            approved = (confirm or _default_confirm)(summary)
+            if not approved:
+                shutil.rmtree(plugin_dir, ignore_errors=True)
+                return False, (
+                    f"Plugin '{safe_name}' not installed (not confirmed).\n{summary}\n"
+                    f"Review the above, then re-run with --yes "
+                    f"(e.g. /plugin install {identifier} --yes) or set "
+                    f"{INSTALL_YES_ENV}=1 to install non-interactively."
+                )
 
         # Install pip dependencies
         if manifest.dependencies:
@@ -212,9 +311,16 @@ def install_plugin(
             install_dir=plugin_dir,
             enabled=True,
             manifest=manifest,
+            commit=commit,
         )
         _save_entry(entry)
-        return True, f"Plugin '{safe_name}' installed successfully ({scope.value} scope)."
+        if scope == PluginScope.PROJECT:
+            # The user installed it on purpose — approve just this entry
+            # under workspace trust so the loader doesn't skip it.
+            from cheetahclaws import trust as _trust
+            _trust.approve_plugin(_project_plugin_cfg(), safe_name, entry.to_dict())
+        at = f" at {commit[:12]}" if commit else ""
+        return True, f"Plugin '{safe_name}' installed successfully ({scope.value} scope){at}."
 
     except Exception as e:
         return False, f"Install failed: {e}"
@@ -360,7 +466,8 @@ def disable_all_plugins(scope: PluginScope | None = None) -> tuple[bool, str]:
 
 # ── Update ────────────────────────────────────────────────────────────────────
 
-def update_plugin(name: str, scope: PluginScope | None = None) -> tuple[bool, str]:
+def update_plugin(name: str, scope: PluginScope | None = None, *,
+                  assume_yes: bool = False, confirm=None) -> tuple[bool, str]:
     entry = get_plugin(name, scope)
     if entry is None:
         return False, f"Plugin '{name}' not found."
@@ -377,8 +484,21 @@ def update_plugin(name: str, scope: PluginScope | None = None) -> tuple[bool, st
     )
     if result.returncode != 0:
         return False, f"git pull failed: {result.stderr.strip()}"
-    # Re-install dependencies if manifest changed
+    # Re-install dependencies if manifest changed — new pip packages need
+    # the same consent as a fresh install.
     manifest = PluginManifest.from_plugin_dir(entry.install_dir)
+    dep_note = ""
     if manifest and manifest.dependencies:
-        _install_dependencies(manifest.dependencies)
-    return True, f"Plugin '{name}' updated. {result.stdout.strip()}"
+        missing = _missing_dependencies(manifest.dependencies)
+        if missing and not (assume_yes or _env_yes()):
+            summary = _install_summary(name, entry.source, manifest,
+                                       _git_head(entry.install_dir), missing)
+            if not (confirm or _default_confirm)(summary):
+                missing = []
+                dep_note = (" New dependencies NOT installed (not confirmed); "
+                            f"set {INSTALL_YES_ENV}=1 and update again to install them.")
+        if missing:
+            _install_dependencies(missing)
+    entry.commit = _git_head(entry.install_dir)
+    _save_entry(entry)
+    return True, f"Plugin '{name}' updated. {result.stdout.strip()}{dep_note}"
