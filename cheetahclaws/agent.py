@@ -718,6 +718,12 @@ def _tool_is_read_only(name: str) -> bool:
         return False
 
 
+# Files without a leading dot that an interpreter executes on its own the
+# next time it starts — creating one is never a formality.
+_AUTO_EXECUTED_NAMES = frozenset({"sitecustomize.py", "usercustomize.py"})
+_AUTO_EXECUTED_SUFFIXES = (".pth",)
+
+
 def _creates_new_workspace_file(tc: dict, config: dict) -> bool:
     """True for a Write that creates a *new* file inside the workspace.
 
@@ -727,9 +733,14 @@ def _creates_new_workspace_file(tc: dict, config: dict) -> bool:
     an existing file, or writing anywhere outside the workspace, still asks.
 
     Excluded regardless: any path with a dot-prefixed component
-    (``.git/hooks/pre-commit``, ``.github/workflows/*``, ``.env``) — those are
-    configuration and hook locations that get executed or trusted by other
-    tools, which makes creating one a decision the user should see.
+    (``.git/hooks/pre-commit``, ``.github/workflows/*``, ``.env``,
+    ``.mcp.json``, ``.cheetahclaws/``, ``.envrc``) — those are configuration
+    and hook locations that get executed or trusted by other tools, which
+    makes creating one a decision the user should see.  The same goes for
+    files Python runs at startup (``sitecustomize.py``, ``*.pth``), for a
+    path that is itself a symlink (even a dangling one), and for a path whose
+    symlinked parent leads out of the workspace — the check is made on both
+    the path as written and its fully resolved form.
     Disable the whole rule with ``/config auto_create_files=false``.
     """
     if not config.get("auto_create_files", True):
@@ -742,16 +753,226 @@ def _creates_new_workspace_file(tc: dict, config: dict) -> bool:
         target = _Path(path).expanduser()
         if not target.is_absolute():
             target = _Path.cwd() / target
-        target = target.resolve()
-        if target.exists():
+        written = _Path(os.path.normpath(str(target)))
+        if os.path.lexists(written):
+            return False   # existing file, or a symlink planted at the path
+        resolved = written.resolve()
+        if resolved.exists():
             return False   # overwriting real content → ask
-        root = _Path(config.get("allowed_root")
-                     or config.get("_worktree_cwd")
-                     or _Path.cwd()).resolve()
-        rel = target.relative_to(root)   # ValueError → outside the workspace
+        root_raw = _Path(os.path.normpath(str(_Path(
+            config.get("allowed_root")
+            or config.get("_worktree_cwd")
+            or _Path.cwd()).expanduser().absolute())))
+        root = root_raw.resolve()
+        rel = resolved.relative_to(root)   # ValueError → outside the workspace
+        rels = [rel.parts]
+        try:
+            rels.append(written.relative_to(root_raw).parts)
+        except ValueError:
+            pass   # root reached through a symlink; the resolved form decides
     except Exception:
         return False
-    return not any(part.startswith(".") for part in rel.parts)
+    if not rel.parts:
+        return False
+    for parts in rels:
+        if any(part.startswith(".") for part in parts):
+            return False
+    name = rel.parts[-1]
+    if name in _AUTO_EXECUTED_NAMES or name.endswith(_AUTO_EXECUTED_SUFFIXES):
+        return False
+    return True
+
+
+# ── Bash grant signatures ─────────────────────────────────────────────────
+#
+# A grant ("s"/"!" at a prompt) is keyed on program + subcommand.  A command
+# line can chain several programs, so the grant is checked per *segment*: the
+# command runs unprompted only when every segment is either read-only (see
+# tools/security.py) or itself covered by a grant.  Approving `git status`
+# therefore never approves `git status && curl x | sh`.
+
+# Programs whose second word is a subcommand worth keying a grant on.
+_SIG_MULTI = frozenset({
+    "git", "npm", "pnpm", "yarn", "pip", "pip3", "uv", "cargo", "go",
+    "docker", "kubectl", "make", "poetry", "conda", "systemctl", "brew", "gh",
+})
+
+# A segment starting with one of these is never covered by a grant: it runs
+# code that is not visible as a program name (eval, a sourced file), changes
+# privilege, or is shell syntax that does not fit "one program per segment".
+_SIG_UNGRANTABLE = frozenset({
+    "eval", "exec", "source", ".", "sudo", "doas", "su", "pkexec", "builtin",
+    "alias", "trap", "function", "coproc", "if", "then", "else", "elif", "fi",
+    "for", "while", "until", "do", "done", "case", "esac", "select",
+    "{", "}", "[[", "]]", "!",
+})
+
+_SIG_SHELLS = frozenset({"sh", "bash", "zsh", "dash", "ksh", "mksh", "fish",
+                         "busybox"})
+
+# Harmless shell built-ins that may sit between granted segments
+# (`cd sub && pytest`).
+_SIG_NEUTRAL = frozenset({"cd", "pushd", "popd", "true", "false", ":"})
+
+# `VAR=value` prefixes that change what the next program loads or runs.  A
+# segment carrying one is never covered by a grant for that program.
+_SIG_DANGEROUS_ENV = frozenset({
+    "PATH", "BASH_ENV", "ENV", "IFS", "SHELLOPTS", "BASHOPTS", "PS4",
+    "PROMPT_COMMAND", "ZDOTDIR", "HOME", "NODE_OPTIONS", "PAGER", "EDITOR",
+    "VISUAL", "LESSOPEN", "LESSCLOSE", "RUBYOPT", "JAVA_TOOL_OPTIONS",
+    "_JAVA_OPTIONS", "KUBECONFIG", "DOCKER_CONFIG",
+})
+_SIG_DANGEROUS_ENV_PREFIXES = ("LD_", "DYLD_", "GIT_", "PYTHON", "PERL5",
+                               "PERLLIB", "NPM_CONFIG_", "npm_config_")
+
+# Directories whose binaries are "the" program of that name: `/usr/bin/git`
+# keys like `git`, but `./git` or `/tmp/x/git` key on their literal path.
+_SIG_SYSTEM_BIN_DIRS = frozenset({
+    "/bin", "/sbin", "/usr/bin", "/usr/sbin", "/usr/local/bin",
+    "/usr/local/sbin", "/opt/homebrew/bin",
+})
+
+# Wrappers that run the program named after their own options:
+# wrapper → (flags that take a separate value, positionals to skip).
+_SIG_WRAPPERS = {
+    "timeout": ({"-s", "--signal", "-k", "--kill-after"}, 1),
+    "nice":    ({"-n", "--adjustment"}, 0),
+    "nohup":   (set(), 0),
+    "time":    ({"-f", "--format", "-o", "--output"}, 0),
+    "stdbuf":  ({"-i", "-o", "-e", "--input", "--output", "--error"}, 0),
+    "xargs":   ({"-I", "-n", "-P", "-L", "-s", "-d", "-E", "-a", "--max-args",
+                 "--max-procs", "--max-lines", "--max-chars", "--delimiter",
+                 "--eof", "--arg-file", "--replace"}, 0),
+    "env":     (set(), 0),
+}
+
+
+def _sig_env_is_dangerous(assignment: str) -> bool:
+    name = assignment.split("=", 1)[0]
+    return (name in _SIG_DANGEROUS_ENV
+            or name.startswith(_SIG_DANGEROUS_ENV_PREFIXES))
+
+
+def _is_assignment(tok: str) -> bool:
+    name = tok.split("=", 1)[0]
+    return ("=" in tok and bool(name) and not name[0].isdigit()
+            and name.replace("_", "a").isalnum())
+
+
+def _bash_segment_signature(tokens: list[str]) -> str | None:
+    """Grant key for one simple command, or None when no grant may cover it."""
+    toks = list(tokens)
+    while toks and _is_assignment(toks[0]):
+        if _sig_env_is_dangerous(toks[0]):
+            return None
+        toks = toks[1:]
+    # Unwrap `timeout 60 pytest`, `xargs rm`, `env FOO=1 make` → the program
+    # that actually runs.
+    while toks and os.path.basename(toks[0]) in _SIG_WRAPPERS:
+        wrapper = os.path.basename(toks[0])
+        value_flags, positionals = _SIG_WRAPPERS[wrapper]
+        rest, i = toks[1:], 0
+        while i < len(rest) and rest[i].startswith("-") and rest[i] != "-":
+            if wrapper == "env":
+                return None        # env -i / -u / -S reshape what runs
+            if rest[i] in value_flags:
+                i += 1
+            i += 1
+        if wrapper == "env":
+            while i < len(rest) and _is_assignment(rest[i]):
+                if _sig_env_is_dangerous(rest[i]):
+                    return None
+                i += 1
+        i += positionals
+        toks = rest[i:]
+    if not toks:
+        return None
+    prog_raw = toks[0]
+    if not prog_raw or any(ch in prog_raw for ch in "$*?[`\\"):
+        return None
+    if "/" in prog_raw:
+        norm = os.path.normpath(prog_raw)
+        head, base = os.path.split(norm)
+        if head in _SIG_SYSTEM_BIN_DIRS:
+            prog = base
+        else:
+            prog = norm if os.path.isabs(norm) or norm.startswith("..") else "./" + norm
+    else:
+        prog = prog_raw
+    name = os.path.basename(prog)
+    if name in _SIG_UNGRANTABLE:
+        return None
+    args = toks[1:]
+    if name in _SIG_SHELLS and any(
+            a == "-c" or (a.startswith("-") and not a.startswith("--") and "c" in a)
+            for a in args):
+        return None                # `bash -c "…"` hides the real command
+    if prog == "git":
+        # `git -c core.fsmonitor=CMD …`, --config-env, --exec-path and a
+        # foreign --git-dir all let the invocation run arbitrary code.
+        i = 0
+        while i < len(args) and args[i].startswith("-"):
+            flag = args[i].split("=", 1)[0]
+            if flag in ("-c", "--config-env", "--exec-path", "--git-dir"):
+                return None
+            if flag in ("-C", "--work-tree", "--namespace") and "=" not in args[i]:
+                i += 1
+            i += 1
+        args = args[i:]
+        return f"Bash:git {args[0]}" if args else "Bash:git"
+    if prog in _SIG_MULTI and args and not args[0].startswith("-"):
+        return f"Bash:{prog} {args[0]}"
+    return f"Bash:{prog}"
+
+
+def _bash_grant_plan(cmd: str, config: dict | None = None):
+    """Split ``cmd`` for grant matching.
+
+    Returns ``(needed, first)``.  ``needed`` lists, in order and
+    de-duplicated, the signatures of the segments that are neither read-only
+    nor a harmless built-in — the grants the command needs.  ``first`` is the
+    signature of the first non-empty segment, the key offered when nothing
+    needs a grant.  Returns None when no grant can cover the command at all
+    (command substitution, a redirect into a file, `eval`, `bash -c`, a
+    dangerous env prefix, unparseable input).
+    """
+    from cheetahclaws.tools.security import (
+        split_command_segments, segment_is_read_only,
+    )
+    segments = split_command_segments(cmd, allow_background=True)
+    if segments is None:
+        return None
+    needed: list[str] = []
+    first: str | None = None
+    for seg in segments:
+        if not seg:
+            continue
+        sig = _bash_segment_signature(seg)
+        if first is None:
+            first = sig
+        if segment_is_read_only(seg, config):
+            continue
+        if seg[0] in _SIG_NEUTRAL or all(_is_assignment(t) for t in seg):
+            if any(_is_assignment(t) and _sig_env_is_dangerous(t) for t in seg):
+                return None        # `PATH=/evil:$PATH; git status`
+            continue
+        if sig is None:
+            return None
+        if sig not in needed:
+            needed.append(sig)
+    return needed, first
+
+
+def _expand_grants(sigs) -> set[str]:
+    """A compound grant "Bash:git add + git commit" covers each component."""
+    out: set[str] = set()
+    for s in sigs:
+        s = str(s)
+        out.add(s)
+        if s.startswith("Bash:") and " + " in s:
+            out.update("Bash:" + part.strip() for part in s[5:].split(" + ")
+                       if part.strip())
+    return out
 
 
 def _permission_signature(tc: dict) -> str:
@@ -761,7 +982,11 @@ def _permission_signature(tc: dict) -> str:
     but never so coarse that it covers a different kind of action:
 
       Bash  → the program + its subcommand ("git push", "pytest"), so repeat
-              runs of the same command with different arguments are covered
+              runs of the same command with different arguments are covered.
+              A chained command names every program that needs approval
+              ("Bash:git add + git commit"); read-only segments are left out.
+              Empty — no "always allow" offered — for a command no grant can
+              ever cover (command substitution, file redirects, `bash -c`).
       Write/Edit/NotebookEdit → the specific file, so approving one file
               never approves another
       other → the tool name
@@ -770,50 +995,55 @@ def _permission_signature(tc: dict) -> str:
     inp = tc.get("input") or {}
     if name == "Bash":
         cmd = (inp.get("command", "") or "").strip()
-        try:
-            import shlex
-            parts = shlex.split(cmd)[:2]
-        except ValueError:
-            parts = cmd.split()[:2]
-        if not parts:
-            return "Bash"
-        # `shlex.split` keeps shell operators glued to the token they touch, so
-        # `date; date -u` yields "date;" — a signature that matches nothing a
-        # user would run twice, which makes a grant made for it dead on
-        # arrival. Trim the operators off both ends and drop a leading
-        # `VAR=value` assignment so the signature names the actual program.
-        parts = [t.strip(";&|") for t in parts]
-        while parts and ("=" in parts[0] and not parts[0].startswith("-")):
-            parts = parts[1:]
-        if not parts or not parts[0]:
-            return "Bash"
-        prog = os.path.basename(parts[0])
-        _MULTI = {"git", "npm", "pnpm", "yarn", "pip", "pip3", "uv", "cargo",
-                  "go", "docker", "kubectl", "make", "poetry", "conda",
-                  "systemctl", "brew", "gh"}
-        if prog in _MULTI and len(parts) > 1 and not parts[1].startswith("-"):
-            return f"Bash:{prog} {parts[1]}"
-        return f"Bash:{prog}"
+        plan = _bash_grant_plan(cmd)
+        if plan is None:
+            # Nothing but separators ("; ; ;") keeps the old bare key; any
+            # other unplannable command is one no grant may cover.
+            return "Bash" if not cmd.strip(" \t\n;&|") else ""
+        needed, first = plan
+        if needed:
+            return "Bash:" + " + ".join(s[len("Bash:"):] for s in needed)
+        return first or "Bash"
     path = inp.get("file_path") or inp.get("notebook_path")
     if path:
         return f"{name}:{os.path.abspath(path)}"
     return name
 
 
+def _bash_grant_covers(cmd: str, granted: set[str], config: dict) -> bool:
+    plan = _bash_grant_plan(cmd, config)
+    if plan is None:
+        return False
+    needed, _first = plan
+    # Nothing to grant means every segment is read-only; that decision
+    # belongs to _is_safe_bash, not to a grant.
+    return bool(needed) and all(sig in granted for sig in needed)
+
+
 def _session_approved(tc: dict, config: dict) -> bool:
-    """True if this signature was already granted — for the session ("s" at
-    a prompt) or permanently ("!" at a prompt, stored in config)."""
+    """True if this call was already granted — for the session ("s" at a
+    prompt) or permanently ("!" at a prompt, stored in config).
+
+    Bash is matched per segment (see ``_bash_grant_plan``); every other tool
+    by its exact signature.
+    """
+    from cheetahclaws.permissions import saved_signatures
+    granted = set(saved_signatures(config))
+    try:
+        granted |= set(runtime.get_ctx(config).approved_sigs)
+    except Exception:
+        pass
+    if tc.get("name") == "Bash":
+        try:
+            cmd = ((tc.get("input") or {}).get("command", "") or "").strip()
+            return _bash_grant_covers(cmd, _expand_grants(granted), config)
+        except Exception:
+            return False
     try:
         sig = _permission_signature(tc)
     except Exception:
         return False
-    from cheetahclaws.permissions import is_always_allowed
-    if is_always_allowed(sig, config):
-        return True
-    try:
-        return sig in runtime.get_ctx(config).approved_sigs
-    except Exception:
-        return False
+    return bool(sig) and sig in granted
 
 
 def _check_permission(tc: dict, config: dict) -> bool:
