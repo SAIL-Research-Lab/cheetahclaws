@@ -79,10 +79,14 @@ def _is_private_ip(ip_str: str) -> bool:
     """True iff the IP is in a private / loopback / link-local /
     metadata range. Belt-and-braces against SSRF."""
     try:
-        ip = ipaddress.ip_address(ip_str)
-    except ValueError:
+        ip = ipaddress.ip_address(ip_str.split("%", 1)[0])
+    except (ValueError, AttributeError):
         # Couldn't parse — be conservative.
         return True
+    # ::ffff:127.0.0.1 and friends reach the embedded IPv4 address.
+    mapped = getattr(ip, "ipv4_mapped", None)
+    if mapped is not None:
+        return _is_private_ip(str(mapped))
     if ip.is_loopback:        return True   # 127/8, ::1
     if ip.is_private:         return True   # 10/8, 172.16/12, 192.168/16, fc00::/7
     if ip.is_link_local:      return True   # 169.254/16, fe80::/10
@@ -93,7 +97,39 @@ def _is_private_ip(ip_str: str) -> bool:
     # but extra defence:
     if ip_str in ("169.254.169.254", "fd00:ec2::254"):
         return True
+    # Shared address space (100.64/10, carrier-grade NAT; also Alibaba
+    # Cloud's 100.100.100.200 metadata endpoint) is not "private" to the
+    # stdlib but is never a public destination either.
+    if ip.version == 4 and ip in ipaddress.ip_network("100.64.0.0/10"):
+        return True
     return False
+
+
+# Public alias so other fetchers (tools/web.py WebFetch) share one SSRF rule.
+is_private_ip = _is_private_ip
+
+
+def resolve_host_ips(host: str) -> list[str]:
+    """Every address ``host`` resolves to (IPv4 and IPv6), de-duplicated.
+
+    A literal IP is returned as-is. Raises OSError when resolution fails.
+    Checking *all* answers matters: a name with one public and one private
+    A record would otherwise pass a first-answer-only check.
+    """
+    h = host.strip("[]")
+    try:
+        ipaddress.ip_address(h.split("%", 1)[0])
+        return [h]
+    except ValueError:
+        pass
+    out: list[str] = []
+    for info in socket.getaddrinfo(h, None, proto=socket.IPPROTO_TCP):
+        addr = info[4][0]
+        if addr not in out:
+            out.append(addr)
+    if not out:
+        raise OSError(f"no addresses for {host!r}")
+    return out
 
 
 # ── Validation helpers ───────────────────────────────────────────────────
