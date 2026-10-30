@@ -169,7 +169,7 @@ Claude Code is a powerful, production-grade AI coding assistant — but its sour
 
 | Feature | Details |
 |---|---|
-| Multi-provider | Anthropic · OpenAI · Gemini · Kimi · Qwen · Zhipu · DeepSeek · MiniMax · OpenRouter · Requesty · Ollama · LM Studio · Custom endpoint |
+| Multi-provider | Anthropic · OpenAI · Gemini · Kimi · Qwen · Zhipu · DeepSeek · MiniMax · OpenRouter · Requesty · Cheaper Inference · Ollama · LM Studio · Custom endpoint |
 | Agent loop | Streaming API + automatic tool-use loop; the whole loop is in `agent.py` |
 | 28 built-in tools | Read · Write · Edit · Bash · Glob · Grep · WebFetch · WebSearch · NotebookEdit · GetDiagnostics · Memory* · Agent/SendMessage · Skill · AskUserQuestion · Task* · SleepTimer · EnterPlanMode/ExitPlanMode · *(MCP + plugin tools auto-added)* |
 | Tool profiles | `tool_profile` trims the tool surface sent each turn to save prompt tokens: `full` (default, everything) · `standard` (compact coding) · `research` (web + documents) · `orchestration` (agents + tasks). Set with `/config tool_profile=standard`. [Guide](docs/guides/usage.md#tool-profiles-tool_profile) |
@@ -214,11 +214,14 @@ Claude Code is a powerful, production-grade AI coding assistant — but its sour
 | **MiniMax** | `MiniMax-Text-01` · `MiniMax-VL-01` · `abab6.5s-chat` | 256k–1M | `MINIMAX_API_KEY` |
 | **OpenRouter** _(400+ models, one key)_ | `openrouter/deepseek/deepseek-v4-flash` · `openrouter/anthropic/claude-sonnet-4-6` · `openrouter/openai/gpt-5` | varies | `OPENROUTER_API_KEY` |
 | **Requesty** _(700+ models, one key)_ | `requesty/openai/gpt-4o-mini` · `requesty/anthropic/claude-sonnet-4-6` · `requesty/claude-sonnet-4-6` | varies | `REQUESTY_API_KEY` |
+| **Cheaper Inference** _(models from several labs, one key)_ | `cheaperinference/gpt-5.4-mini` · `cheaperinference/claude-sonnet-5` · `cheaperinference/deepseek-v4-flash` | varies | `CHEAPERINFERENCE_API_KEY` |
 | **AWS Bedrock / Azure / Vertex** _(via litellm)_ | `litellm/<provider>/<model>` | varies | provider-specific |
 
 > **`openrouter/` gateway:** one key for 400+ models across vendors. The model ID keeps OpenRouter's upstream `<vendor>/<model>` path, so the call is double-prefixed: `openrouter/deepseek/deepseek-v4-flash`. To pin which upstream provider (and quantization) serves the request, append `@<provider>[/<quantization>]` — `openrouter/deepseek/deepseek-v4-flash@gmicloud/fp8` — which is sent as OpenRouter's `provider` request-body object rather than glued into the model ID. See [usage.md](docs/guides/usage.md#openrouter-400-models-one-key).
 
 > **`requesty/` gateway:** works the same way: everything after `requesty/` is sent as the model ID, either a catalog `<vendor>/<model>` path (`requesty/openai/gpt-4o-mini`) or a managed policy ID (`requesty/claude-sonnet-4-6`). Managed policy IDs ending in `@eu` (`requesty/gpt-5-mini@eu`) route through EU providers only. See [usage.md](docs/guides/usage.md#requesty-700-models-one-key).
+
+> **`cheaperinference/` gateway:** one key for models from several labs. Everything after `cheaperinference/` is sent as the model ID, e.g. `cheaperinference/gpt-5.4-mini`. See [usage.md](docs/guides/usage.md#cheaper-inference-one-key-for-several-labs).
 
 > **`litellm/` adapter:** routes to 100+ providers behind one SDK — mainly for upstreams with awkward auth (Bedrock SigV4, Azure deployment routing, Vertex service-account JWTs). For plain OpenAI-shaped endpoints, prefer the zero-dependency `custom/` adapter. Install with `pip install ".[litellm]"`. See [recipes.md](docs/guides/recipes.md#alternative-cloud-providers-with-non-trivial-auth-via-the-litellm-provider).
 
@@ -315,7 +318,7 @@ cheetahclaws --model gpt-4o             # pick any model
 cheetahclaws --model deepseek-chat --thinking --verbose
 ```
 
-Provider get-key pages: [Anthropic](https://console.anthropic.com) · [OpenAI](https://platform.openai.com) · [Gemini](https://aistudio.google.com) · [Kimi](https://platform.moonshot.cn) · [Qwen](https://dashscope.aliyun.com) · [Zhipu](https://open.bigmodel.cn) · [DeepSeek](https://platform.deepseek.com) · [MiniMax](https://platform.minimaxi.chat) · [OpenRouter](https://openrouter.ai/keys) · [Requesty](https://app.requesty.ai/api-keys).
+Provider get-key pages: [Anthropic](https://console.anthropic.com) · [OpenAI](https://platform.openai.com) · [Gemini](https://aistudio.google.com) · [Kimi](https://platform.moonshot.cn) · [Qwen](https://dashscope.aliyun.com) · [Zhipu](https://open.bigmodel.cn) · [DeepSeek](https://platform.deepseek.com) · [MiniMax](https://platform.minimaxi.chat) · [OpenRouter](https://openrouter.ai/keys) · [Requesty](https://app.requesty.ai/api-keys) · [Cheaper Inference](https://cheaperinference.com/signup).
 
 **One key for 400+ models** — [OpenRouter](https://openrouter.ai) fronts every major vendor behind one OpenAI-compatible endpoint, so a single key covers Claude, GPT, Gemini, DeepSeek, Llama, Qwen and the rest:
 
@@ -332,6 +335,14 @@ cheetahclaws --model openrouter/deepseek/deepseek-v4-flash@gmicloud/fp8   # pin 
 export REQUESTY_API_KEY=rqsty-...
 cheetahclaws --model requesty/openai/gpt-4o-mini
 cheetahclaws --model requesty/claude-sonnet-4-6       # managed policy ID
+```
+
+[Cheaper Inference](https://cheaperinference.com) is another one-key gateway (OpenAI-compatible, models from several labs):
+
+```bash
+export CHEAPERINFERENCE_API_KEY=ci_live_...
+cheetahclaws --model cheaperinference/gpt-5.4-mini
+cheetahclaws --model cheaperinference/claude-sonnet-5
 ```
 
 **AWS Bedrock / Azure / Vertex** use the `litellm/<provider>/<model>` form (`pip install ".[litellm]"`) — full env-var recipes in [recipes.md](docs/guides/recipes.md#alternative-cloud-providers-with-non-trivial-auth-via-the-litellm-provider).
@@ -399,11 +410,12 @@ cheetahclaws --model ollama/qwen2.5-coder    # 2. provider/model
 cheetahclaws --model kimi:moonshot-v1-32k    # 3. provider:model
 ```
 
-**Gateways keep the upstream path.** OpenRouter, Requesty, NIM and LiteLLM address models by a `<vendor>/<model>` path of their own, so those calls are double-prefixed — only the **first** segment is the provider, everything after it is passed through verbatim:
+**Gateways keep the upstream path.** OpenRouter, Requesty, Cheaper Inference, NIM and LiteLLM address models by a path of their own, so those calls are prefixed — only the **first** segment is the provider, everything after it is passed through verbatim:
 
 ```bash
 cheetahclaws --model openrouter/deepseek/deepseek-v4-flash        # → OpenRouter, model "deepseek/deepseek-v4-flash"
 cheetahclaws --model nim/meta/llama-3.3-70b-instruct              # → NVIDIA NIM
+cheetahclaws --model cheaperinference/gpt-5.4-mini                # → Cheaper Inference, model "gpt-5.4-mini"
 cheetahclaws --model requesty/openai/gpt-4o-mini                  # → Requesty, model "openai/gpt-4o-mini"
 cheetahclaws --model openrouter/deepseek/deepseek-v4-flash@gmicloud/fp8   # + pinned provider / quantization
 ```

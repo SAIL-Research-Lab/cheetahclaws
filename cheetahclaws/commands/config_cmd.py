@@ -44,6 +44,7 @@ def cmd_model(args: str, _state, config) -> bool:
         info("  e.g. /model openrouter/deepseek/deepseek-v4-flash  (multi-level: provider/upstream/model)")
         info("  e.g. /model openrouter/deepseek/deepseek-v4-flash@gmicloud/fp8  (pin provider/quantization)")
         info("  e.g. /model requesty/openai/gpt-4o-mini  (or a managed policy: requesty/claude-sonnet-4-6)")
+        info("  e.g. /model cheaperinference/gpt-5.4-mini  (gateway: one key for models from several labs)")
     else:
         m = args.strip()
         # "/model ollama" with no model name → interactive picker

@@ -193,6 +193,27 @@ model. Managed policy IDs ending in `@eu` only route through EU providers.
 > than it has to). Raise it with `/config context_window=<N>` if you want the
 > model's full window.
 
+### Cheaper Inference (one key for several labs)
+
+[Cheaper Inference](https://cheaperinference.com) is an OpenAI-compatible LLM
+gateway (`https://api.cheaperinference.com/v1`). One key gives access to models
+from several labs. Get a key at
+[cheaperinference.com/signup](https://cheaperinference.com/signup); docs are at
+[cheaperinference.com/docs](https://cheaperinference.com/docs).
+
+```bash
+export CHEAPERINFERENCE_API_KEY=ci_live_...   # or: /config cheaperinference_api_key=ci_live_...
+
+cheetahclaws --model cheaperinference/gpt-5.4-mini
+cheetahclaws --model cheaperinference/claude-sonnet-5
+cheetahclaws --model cheaperinference/deepseek-v4-flash
+```
+
+As with OpenRouter, the first segment (`cheaperinference`) is the provider and
+everything after it is sent verbatim as the model ID. The IDs are the bare ids
+from the gateway's model list (`GET /v1/models`), e.g. `gpt-5.4-mini`. Cost
+tracking uses the same per-model table as direct calls.
+
 ### LiteLLM (AWS Bedrock / Azure / Vertex AI)
 
 Use the `litellm/` prefix when the upstream needs auth that's painful to
