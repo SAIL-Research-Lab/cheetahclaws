@@ -10,13 +10,17 @@ desktop app, with nothing reimplemented.
 ┌─ Desktop shell (Electron) ─────────────────────────────┐
 │  loading.html  →  spawn `cheetahclaws --web --no-auth`  │
 │                   (127.0.0.1, auto-picked free port)    │
-│                ↓ parse the printed "Chat UI: …/chat"    │
-│  BrowserWindow.loadURL(http://127.0.0.1:<port>/chat)    │
+│     ↓ parse the printed "Chat UI: …/chat?token=<T>"     │
+│  BrowserWindow.loadURL(…:<port>/chat?token=<T>)         │
 └─────────────────────────────────────────────────────────┘
 ```
 
 The server binds to `127.0.0.1` only and runs as you, with your own API key —
-no network exposure, no multi-tenancy. This is the local, bring-your-own-key
+no network exposure, no multi-tenancy. Binding to localhost is not enough on
+its own (any website open in your browser can reach `127.0.0.1`), so even with
+`--no-auth` the server requires a random per-launch token: it prints it in the
+ready line, the sidecar passes it in the window URL, and the server swaps it
+for an HttpOnly cookie. Cross-origin WebSocket/POST requests are also refused. This is the local, bring-your-own-key
 model; the hard SaaS problems (sandboxing, billing) are deliberately out of
 scope for P1.
 
@@ -25,7 +29,8 @@ scope for P1.
 - ✅ **Runs end-to-end on macOS** — the Electron shell launches the server,
   discovers its port, and loads the chat UI in a native window.
 - ✅ **Sidecar integration verified** — `npm run smoke` launches the real
-  server, discovers its port, and confirms `/chat`, `/`, `/health` all serve.
+  server, discovers its port + launch token, and confirms `/health` serves,
+  `/chat` is refused without the token, and `/chat`, `/` serve with it.
 - ✅ **Self-contained server verified** — `scripts/build-server.sh` freezes the
   server with PyInstaller into a ~95 MB standalone binary that serves the full
   web UI with **no Python installed**; the sidecar drives it identically. So a

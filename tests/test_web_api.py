@@ -8,6 +8,7 @@ Run with:  pytest tests/test_web_api.py -v
 """
 from __future__ import annotations
 
+import contextlib
 import os
 import socket
 import sys
@@ -91,6 +92,27 @@ def fresh_db():
     yield
 
 
+@pytest.fixture(autouse=True)
+def default_web_settings(monkeypatch):
+    """Pin the security knobs to their defaults, whatever the developer's
+    ~/.cheetahclaws/config.json says; tests flip individual keys."""
+    from cheetahclaws.web import server as _srv
+    monkeypatch.setattr(_srv, "_web_settings", {
+        "allowed_origins": frozenset(),
+        "open_registration": False,
+        "public_metrics": False,
+        "nonadmin_privileged": False,
+        "require_launch_token": True,
+    })
+    yield _srv._web_settings
+
+
+@pytest.fixture
+def open_registration(default_web_settings):
+    """Multi-user tests that self-register several accounts."""
+    default_web_settings["open_registration"] = True
+
+
 def _csrf_request_hook(request):
     """Echo the ccsrf cookie back as X-CSRF-Token on state-changing requests.
 
@@ -137,6 +159,7 @@ def test_health_returns_ok(server_url):
 
 def test_metrics_prometheus_format(server_url):
     with _client(server_url) as c:
+        _register(c, "alice")  # /metrics requires auth by default
         r = c.get("/metrics")
         assert r.status_code == 200
         body = r.text
@@ -148,14 +171,14 @@ def test_metrics_prometheus_format(server_url):
 def test_bootstrap_empty_then_after_register(server_url):
     with _client(server_url) as c:
         assert c.get("/api/auth/bootstrap").json() == {
-            "has_users": False, "no_auth": False,
+            "has_users": False, "no_auth": False, "open_registration": True,
         }
         r = _register(c, "alice")
         assert r.status_code == 200
         assert c.get("/api/auth/bootstrap").json()["has_users"] is True
 
 
-def test_first_user_is_admin_second_is_not(server_url):
+def test_first_user_is_admin_second_is_not(server_url, open_registration):
     with _client(server_url) as c:
         u1 = _register(c, "alice").json()["user"]
         # Different client so the cookie from register doesn't leak
@@ -172,7 +195,7 @@ def test_register_short_password_400(server_url):
         assert r.status_code == 400
 
 
-def test_register_duplicate_username_409(server_url):
+def test_register_duplicate_username_409(server_url, open_registration):
     with _client(server_url) as c:
         _register(c, "alice")
         with _client(server_url) as c2:
@@ -316,7 +339,7 @@ def test_batch_delete_sessions(server_url):
         assert {s["id"] for s in remaining} == {sids[2]}
 
 
-def test_batch_delete_skips_other_users_sessions(server_url):
+def test_batch_delete_skips_other_users_sessions(server_url, open_registration):
     with _client(server_url) as ca:
         _register(ca, "alice")
         a_sid = ca.post("/api/prompt",
@@ -440,7 +463,7 @@ def test_delete_folder_preserves_sessions_as_ungrouped(server_url):
         assert s["folder_id"] is None
 
 
-def test_folder_cross_user_isolation(server_url):
+def test_folder_cross_user_isolation(server_url, open_registration):
     with _client(server_url) as ca:
         _register(ca, "alice")
         a_fid = ca.post("/api/folders",
@@ -508,7 +531,7 @@ def test_reap_stale_chat_sessions_passes_user_id(server_url):
         assert sid not in _apimod._chat_sessions
 
 
-def test_cross_user_isolation(server_url):
+def test_cross_user_isolation(server_url, open_registration):
     with _client(server_url) as ca:
         _register(ca, "alice")
         sid = ca.post("/api/prompt",
@@ -553,7 +576,8 @@ def test_auth_required_for_chat_endpoints(server_url):
         assert c.get("/api/models").status_code == 401
 
 
-def test_metrics_counters_increment(server_url):
+def test_metrics_counters_increment(server_url, default_web_settings):
+    default_web_settings["public_metrics"] = True
     with _client(server_url) as c:
         before = c.get("/metrics").text
         # Trigger a 401 and a successful registration
@@ -581,3 +605,268 @@ def test_cors_preflight_for_unknown_origin(server_url):
                       headers={"Origin": "http://example.com",
                                "Access-Control-Request-Method": "GET"})
         assert r.status_code == 204
+
+
+# ── Security: origin policy, registration, admin gating, metrics ────────
+
+
+@pytest.fixture
+def owner_config(monkeypatch):
+    """Deterministic owner config (permission_mode=auto, no legacy escape
+    hatch) regardless of the developer's ~/.cheetahclaws/config.json."""
+    from cheetahclaws import config as _cfg
+    real = _cfg.load_config
+
+    def _fake():
+        cfg = real()
+        cfg["permission_mode"] = "auto"
+        cfg["tool_profile"] = "full"
+        cfg.pop("web_nonadmin_privileged", None)
+        return cfg
+
+    monkeypatch.setattr(_cfg, "load_config", _fake)
+    return _fake
+
+
+def _admin_and_member(server_url):
+    """Register alice (admin) and have her create bob (member).
+
+    Returns (alice_client, bob_client); caller closes them.
+    """
+    ca = _client(server_url)
+    assert _register(ca, "alice").status_code == 200
+    r = _register(ca, "bob")
+    assert r.status_code == 200, r.text
+    cb = _client(server_url)
+    assert _login(cb, "bob").status_code == 200
+    return ca, cb
+
+
+@contextlib.contextmanager
+def _closing(*clients):
+    try:
+        yield
+    finally:
+        for cl in clients:
+            cl.close()
+
+
+def _raw_ws_upgrade(server_url: str, path: str, origin: str) -> bytes:
+    host_port = server_url.split("//", 1)[1]
+    host, port = host_port.split(":")
+    with socket.create_connection((host, int(port)), timeout=5) as s:
+        s.sendall((
+            f"GET {path} HTTP/1.1\r\nHost: {host_port}\r\n"
+            f"Upgrade: websocket\r\nConnection: Upgrade\r\n"
+            f"Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
+            f"Sec-WebSocket-Version: 13\r\nOrigin: {origin}\r\n\r\n"
+        ).encode())
+        return s.recv(4096)
+
+
+def test_registration_closed_after_first_user(server_url):
+    with _client(server_url) as c:
+        assert _register(c, "alice").json()["user"]["is_admin"] is True
+    with _client(server_url) as c2:
+        r = _register(c2, "mallory")
+        assert r.status_code == 403
+        assert "web_open_registration" in r.json()["error"]
+        boot = c2.get("/api/auth/bootstrap").json()
+        assert boot["has_users"] is True
+        assert boot["open_registration"] is False
+
+
+def test_admin_can_create_accounts_and_keeps_own_session(server_url):
+    ca, cb = _admin_and_member(server_url)
+    with _closing(ca, cb):
+        # Alice is still alice — creating bob didn't swap her cookie.
+        assert ca.get("/api/auth/whoami").json()["user"]["username"] == "alice"
+        bob = cb.get("/api/auth/whoami").json()["user"]
+        assert bob["username"] == "bob" and bob["is_admin"] is False
+        # A non-admin can't create accounts either.
+        assert _register(cb, "carol").status_code == 403
+
+
+def test_open_registration_escape_hatch(server_url, open_registration):
+    with _client(server_url) as c:
+        _register(c, "alice")
+    with _client(server_url) as c2:
+        r = _register(c2, "bob")
+        assert r.status_code == 200
+        assert r.json()["user"]["is_admin"] is False
+
+
+def test_metrics_requires_auth_by_default(server_url, default_web_settings):
+    with _client(server_url) as c:
+        assert c.get("/metrics").status_code == 401
+        assert "web_public_metrics" in c.get("/metrics").json()["error"]
+        _register(c, "alice")
+        assert c.get("/metrics").status_code == 200
+    default_web_settings["public_metrics"] = True
+    with _client(server_url) as c:
+        assert c.get("/metrics").status_code == 200
+
+
+def test_health_is_public(server_url):
+    # Docker HEALTHCHECK hits /health without any cookie.
+    assert httpx.get(f"{server_url}/health").status_code == 200
+
+
+def test_cross_origin_post_rejected(server_url):
+    with _client(server_url) as c:
+        r = c.post("/api/auth/login",
+                   json={"username": "x", "password": "y"},
+                   headers={"Origin": "http://evil.example"})
+        assert r.status_code == 403
+        assert "web_allowed_origins" in r.json()["error"]
+        # Same-origin Origin passes the gate (then fails on credentials).
+        r = c.post("/api/auth/login",
+                   json={"username": "x", "password": "y"},
+                   headers={"Origin": server_url})
+        assert r.status_code == 401
+
+
+def test_allowed_origins_config(server_url, default_web_settings):
+    default_web_settings["allowed_origins"] = frozenset(
+        {"https://ui.example.com"})
+    with _client(server_url) as c:
+        r = c.post("/api/auth/login",
+                   json={"username": "x", "password": "y"},
+                   headers={"Origin": "https://ui.example.com"})
+        assert r.status_code == 401  # passed origin gate
+        assert r.headers.get("access-control-allow-origin") == \
+            "https://ui.example.com"
+
+
+def test_cors_does_not_echo_foreign_origin(server_url):
+    with _client(server_url) as c:
+        r = c.get("/health", headers={"Origin": "http://evil.example"})
+        assert "access-control-allow-origin" not in r.headers
+        r = c.request("OPTIONS", "/api/sessions",
+                      headers={"Origin": "http://evil.example",
+                               "Access-Control-Request-Method": "POST"})
+        assert "access-control-allow-origin" not in r.headers
+        r = c.get("/health", headers={"Origin": server_url})
+        assert r.headers.get("access-control-allow-origin") == server_url
+
+
+@pytest.mark.parametrize("path", ["/ws", "/api/events"])
+def test_cross_origin_websocket_rejected(server_url, path):
+    resp = _raw_ws_upgrade(server_url, path, "http://evil.example")
+    assert resp.startswith(b"HTTP/1.1 403")
+    assert b"101 Switching" not in resp
+
+
+def test_same_origin_websocket_still_upgrades(server_url):
+    # /ws accepts the upgrade and then authenticates via the first frame.
+    resp = _raw_ws_upgrade(server_url, "/ws", server_url)
+    assert resp.startswith(b"HTTP/1.1 101")
+
+
+def test_nonadmin_cannot_raise_permission_mode(server_url, owner_config):
+    ca, cb = _admin_and_member(server_url)
+    with _closing(ca, cb):
+        sid = cb.post("/api/prompt",
+                      json={"prompt": "", "session_id": ""}).json()["session_id"]
+        r = cb.patch("/api/config", json={
+            "session_id": sid, "config": {"permission_mode": "accept-all"}})
+        assert r.status_code == 403
+        assert "web_nonadmin_privileged" in r.json()["error"]
+        # Tightening is fine.
+        r = cb.patch("/api/config", json={
+            "session_id": sid, "config": {"permission_mode": "plan"}})
+        assert r.status_code == 200
+        assert r.json()["permission_mode"] == "plan"
+        # Base URLs could redirect the owner's API keys — admin only.
+        r = cb.patch("/api/config", json={
+            "session_id": sid,
+            "config": {"custom_base_url": "http://evil.example"}})
+        assert r.status_code == 403
+
+        a_sid = ca.post("/api/prompt",
+                        json={"prompt": "", "session_id": ""}
+                        ).json()["session_id"]
+        r = ca.patch("/api/config", json={
+            "session_id": a_sid, "config": {"permission_mode": "accept-all"}})
+        assert r.status_code == 200
+        assert r.json()["permission_mode"] == "accept-all"
+
+
+def test_nonadmin_persisted_mode_is_clamped_on_hydrate(server_url,
+                                                        owner_config):
+    ca, cb = _admin_and_member(server_url)
+    with _closing(ca, cb):
+        sid = cb.post("/api/prompt",
+                      json={"prompt": "", "session_id": ""}).json()["session_id"]
+        bob_id = cb.get("/api/auth/whoami").json()["user"]["id"]
+        # Simulate a session persisted before the privilege model existed.
+        from cheetahclaws.web import db as _db, api as _apimod
+        _db.repo.upsert_session(sid, bob_id, title="t",
+                                config={"permission_mode": "accept-all"})
+        _apimod._chat_sessions.clear()
+        cfg = cb.get(f"/api/config?sid={sid}").json()
+        assert cfg["permission_mode"] == "auto"
+
+
+def test_nonadmin_privileged_slash_commands_refused(server_url, owner_config):
+    ca, cb = _admin_and_member(server_url)
+    with _closing(ca, cb):
+        sid = cb.post("/api/prompt",
+                      json={"prompt": "", "session_id": ""}).json()["session_id"]
+        for cmd in ("/config", "/cwd /", "/plugin", "/mcp", "/telegram",
+                    "/permissions accept-all"):
+            r = cb.post("/api/prompt", json={"prompt": cmd, "session_id": sid})
+            assert r.status_code == 200
+            outs = " ".join(e["data"].get("output", "")
+                            for e in r.json()["events"])
+            assert "restricted to admin" in outs, (cmd, outs)
+
+
+def test_nonadmin_escape_hatch(server_url, owner_config, monkeypatch):
+    from cheetahclaws import config as _cfg
+
+    def _legacy():
+        cfg = owner_config()
+        cfg["web_nonadmin_privileged"] = True
+        return cfg
+
+    monkeypatch.setattr(_cfg, "load_config", _legacy)
+    ca, cb = _admin_and_member(server_url)
+    with _closing(ca, cb):
+        sid = cb.post("/api/prompt",
+                      json={"prompt": "", "session_id": ""}).json()["session_id"]
+        r = cb.patch("/api/config", json={
+            "session_id": sid, "config": {"permission_mode": "accept-all"}})
+        assert r.status_code == 200
+
+
+def test_session_config_never_returns_secrets(server_url, monkeypatch):
+    from cheetahclaws import config as _cfg
+    real = _cfg.load_config
+    secret = "sk-test-SUPERSECRET-0123456789"
+    monkeypatch.setattr(_cfg, "load_config",
+                        lambda: {**real(), "anthropic_api_key": secret,
+                                 "telegram_token": "123456:ABCDEFGHIJK"})
+    with _client(server_url) as c:
+        _register(c, "alice")
+        sid = c.post("/api/prompt",
+                     json={"prompt": "", "session_id": ""}).json()["session_id"]
+        for url in (f"/api/config?sid={sid}", f"/api/sessions/{sid}",
+                    "/api/sessions", "/api/models"):
+            body = c.get(url).text
+            assert secret not in body, url
+            assert "ABCDEFGHIJK" not in body, url
+
+
+def test_lab_api_requires_auth(server_url):
+    with _client(server_url) as c:
+        assert c.get("/api/lab/runs").status_code == 401
+        assert c.post("/api/lab/runs", json={}).status_code == 401
+
+
+def test_lab_api_start_run_is_admin_only(server_url, owner_config):
+    ca, cb = _admin_and_member(server_url)
+    with _closing(ca, cb):
+        r = cb.post("/api/lab/runs", json={"topic": "x"})
+        assert r.status_code == 403
+        assert "web_nonadmin_privileged" in r.json()["error"]

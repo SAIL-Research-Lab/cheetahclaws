@@ -11,14 +11,21 @@ const { spawn } = require('child_process');
 const readline = require('readline');
 
 // The server prints its ready line to stdout with an explicit flush, e.g.:
-//   Chat UI:  http://localhost:8771/chat
+//   Chat UI:  http://localhost:8771/chat?token=AbC123...
 // We treat the appearance of that URL as the readiness signal and pull the
 // port straight out of it (the server may auto-pick a free port).
-const READY_RE = /https?:\/\/(?:localhost|127\.0\.0\.1):(\d+)\/chat/i;
+//
+// With --no-auth the server still requires a random per-launch token (so
+// other websites open in the user's browser can't drive the local server);
+// it's printed in the same line. We hand it to the window URL; the server
+// swaps it for an HttpOnly cookie and redirects to the clean /chat URL.
+// Older servers print no token — then the group is simply undefined.
+const READY_RE = /https?:\/\/(?:localhost|127\.0\.0\.1):(\d+)\/chat(?:\?token=([A-Za-z0-9_-]+))?/i;
 
 /**
  * Start the CheetahClaws web server as a sidecar.
- * Resolves once the server is listening, with { child, port, url, stop }.
+ * Resolves once the server is listening, with { child, port, token, url, stop }.
+ * `url` already carries the launch token when the server printed one.
  *
  * @param {object} [opts]
  * @param {string} [opts.command]  Executable to run (default: $CHEETAHCLAWS_BIN or "cheetahclaws").
@@ -68,22 +75,25 @@ function startSidecar(opts = {}) {
       reject(err);
     }
 
-    function succeed(port) {
+    function succeed(port, token) {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      const query = token ? `?token=${encodeURIComponent(token)}` : '';
       resolve({
         child,
         port,
-        url: `http://${host}:${port}/chat`,
+        token: token || null,
+        url: `http://${host}:${port}/chat${query}`,
         stop: () => stopChild(child),
       });
     }
 
     function scan(line) {
-      onLog(line);
+      // Don't echo the launch token into logs.
+      onLog(line.replace(/([?&]token=)[A-Za-z0-9_-]+/g, '$1***'));
       const m = READY_RE.exec(line);
-      if (m) succeed(Number(m[1]));
+      if (m) succeed(Number(m[1]), m[2]);
     }
 
     // The ready line goes to stdout, but watch stderr too in case logging is

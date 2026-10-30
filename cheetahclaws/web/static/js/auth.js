@@ -23,6 +23,12 @@ Object.assign(ChatApp.prototype, {
         return;
       }
       this._authMode = d.has_users ? 'login' : 'register';
+      // Closed registration (default once an admin exists): hide the
+      // "create an account" toggle — the server would refuse it anyway.
+      if (d.has_users && d.open_registration === false) {
+        const t = document.getElementById('auth-toggle-link');
+        if (t) t.style.display = 'none';
+      }
       this._renderAuthMode();
       const who = await this.whoami();
       if (who) {

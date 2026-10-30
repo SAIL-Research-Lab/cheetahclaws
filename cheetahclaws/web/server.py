@@ -64,6 +64,33 @@ _server_no_auth = False
 _server_cmd: list[str] = []
 _chat_ui_ready = False  # set by _try_init_chat_auth after deps loaded
 
+# --no-auth launch token. Even with auth disabled, the server only serves
+# browsers that present this per-launch secret (via ?token= on the printed
+# URL, which is exchanged for an HttpOnly cookie). Without it, any website
+# the user visits could open ws://127.0.0.1:<port>/ws and drive the REPL.
+# None = gate disabled (legacy behaviour, opt-in via config
+# "web_no_auth_require_token": false).
+_server_launch_token: Optional[str] = None
+_LAUNCH_COOKIE = "cclaunch"
+
+# Security knobs read from ~/.cheetahclaws/config.json at startup (see
+# _load_web_settings). Tests poke this dict directly.
+_web_settings: dict = {
+    # Extra origins (scheme://host[:port]) allowed to make cross-origin
+    # requests / WS upgrades. Same-origin is always allowed.
+    "allowed_origins": frozenset(),
+    # After the first (admin) account exists, let anyone self-register.
+    "open_registration": False,
+    # Serve /metrics without auth (Prometheus scrapers).
+    "public_metrics": False,
+    # Let non-admin chat users run privileged commands / lab runs (legacy).
+    "nonadmin_privileged": False,
+    # --no-auth still demands the per-launch token (see above).
+    "require_launch_token": True,
+}
+
+_register_lock = threading.Lock()
+
 _MIME = {
     ".js": "application/javascript",
     ".css": "text/css",
@@ -147,18 +174,6 @@ class _PtySession:
         self.owner_uid = owner_uid
 
 
-def _check_pty_owner(session: "_PtySession", cookie_str: str) -> bool:
-    """Return True if the JWT-authenticated caller owns this session.
-
-    Sessions created without a JWT cookie (password-only mode) have
-    owner_uid=None and accept any authenticated caller. Sessions tagged
-    with an owner_uid require the caller to present a JWT whose `sub`
-    matches.
-    """
-    if session.owner_uid is None:
-        return True
-    return _jwt_user_id(cookie_str) == session.owner_uid
-
     def write(self, data: bytes) -> None:
         if not self.closed:
             with self.lock:
@@ -194,6 +209,19 @@ def _check_pty_owner(session: "_PtySession", cookie_str: str) -> bool:
                 self.proc.kill()
             except Exception:
                 pass
+
+
+def _check_pty_owner(session: "_PtySession", cookie_str: str) -> bool:
+    """Return True if the JWT-authenticated caller owns this session.
+
+    Sessions created without a JWT cookie (password-only mode) have
+    owner_uid=None and accept any authenticated caller. Sessions tagged
+    with an owner_uid require the caller to present a JWT whose `sub`
+    matches.
+    """
+    if session.owner_uid is None:
+        return True
+    return _jwt_user_id(cookie_str) == session.owner_uid
 
 
 # ── HTML page ────────────────────────────────────────────────────────────
@@ -442,16 +470,89 @@ def _recv_until(sock: socket.socket, sentinel: bytes, max_bytes: int = 65536) ->
     return buf
 
 
+_req_ctx = threading.local()
+
+
+def _parse_origin_list(value) -> frozenset:
+    """Normalise a config/env origin list (list or comma-separated str)."""
+    if not value:
+        return frozenset()
+    if isinstance(value, str):
+        value = value.split(",")
+    out = set()
+    for item in value:
+        item = str(item).strip().lower().rstrip("/")
+        if item:
+            out.add(item)
+    return frozenset(out)
+
+
+def _host_port(netloc: str, scheme: str) -> Optional[tuple[str, int]]:
+    """Parse 'host[:port]' into (host, port), defaulting port by scheme."""
+    from urllib.parse import urlsplit
+    try:
+        u = urlsplit("//" + netloc.strip().lower())
+        host, port = u.hostname, u.port
+    except ValueError:
+        return None
+    if not host:
+        return None
+    if port is None:
+        port = 443 if scheme in ("https", "wss") else 80
+    return host, port
+
+
+def _origin_allowed(origin: str, headers: Optional[dict] = None) -> bool:
+    """Is a browser request carrying this Origin allowed to talk to us?
+
+    Allowed when the Origin header is absent (non-browser clients and
+    same-origin GETs), names the same host:port the request was sent to
+    (Host, or X-Forwarded-Host behind a reverse proxy — browsers cannot
+    forge either on a cross-origin fetch/WebSocket), or is listed in
+    ``web_allowed_origins`` / $CHEETAHCLAWS_WEB_ALLOWED_ORIGINS.
+    """
+    if not origin:
+        return True
+    norm = origin.strip().lower().rstrip("/")
+    if norm in _web_settings.get("allowed_origins", ()):
+        return True
+    from urllib.parse import urlsplit
+    try:
+        u = urlsplit(norm)
+    except ValueError:
+        return False
+    if u.scheme not in ("http", "https") or not u.netloc:
+        return False  # includes the opaque "null" origin
+    target = _host_port(u.netloc, u.scheme)
+    if target is None:
+        return False
+    headers = headers or {}
+    for hdr in (headers.get("host", ""), headers.get("x-forwarded-host", "")):
+        for cand in hdr.split(","):
+            if cand.strip() and _host_port(cand, u.scheme) == target:
+                return True
+    return False
+
+
+def _origin_rejection_body(origin: str) -> bytes:
+    return json.dumps({
+        "error": (f"cross-origin request from {origin!r} rejected. If this "
+                  f"origin is trusted, add it to \"web_allowed_origins\" in "
+                  f"~/.cheetahclaws/config.json (or set "
+                  f"CHEETAHCLAWS_WEB_ALLOWED_ORIGINS) and restart."),
+    }).encode()
+
+
 def _cors_origin(request_origin: str = "") -> str:
-    """Return a safe CORS origin: echo back the request Origin if present,
-    otherwise omit the header entirely.  Never emit '*' so that
-    credentialed (cookie-based) requests are allowed by browsers."""
-    if request_origin:
+    """Return the origin to echo in Access-Control-Allow-Origin, or "".
+
+    Only origins that pass `_origin_allowed` (same-origin or explicitly
+    allow-listed) are echoed. Never emit '*' — responses are credentialed.
+    """
+    if request_origin and _origin_allowed(
+            request_origin, getattr(_req_ctx, "headers", None)):
         return request_origin
     return ""
-
-
-_req_ctx = threading.local()
 
 
 def _emit_access_log(status_code: int) -> None:
@@ -588,9 +689,12 @@ def _check_auth(query: str = "", body_token: str = "",
 
     Chat UI endpoints use JWT via `_jwt_user_id` instead; this helper only
     gates the PTY-terminal endpoints.
+
+    In --no-auth mode the password is replaced by the per-launch token
+    (see `_launch_token_ok`).
     """
     if _server_no_auth:
-        return True
+        return _launch_token_ok(query, body_token, cookie_str)
     token = body_token
     if not token and cookie_str:
         for part in cookie_str.split(";"):
@@ -609,6 +713,41 @@ def _check_auth(query: str = "", body_token: str = "",
     return hmac.compare_digest(token, _server_password)
 
 
+def _cookie_value(cookie_str: str, name: str) -> str:
+    if not cookie_str:
+        return ""
+    for part in cookie_str.split(";"):
+        part = part.strip()
+        if part.startswith(name + "="):
+            from urllib.parse import unquote
+            return unquote(part[len(name) + 1:])
+    return ""
+
+
+def _query_value(query: str, name: str) -> str:
+    for param in (query or "").split("&"):
+        if param.startswith(name + "="):
+            from urllib.parse import unquote
+            return unquote(param[len(name) + 1:])
+    return ""
+
+
+def _launch_token_ok(query: str = "", body_token: str = "",
+                     cookie_str: str = "") -> bool:
+    """--no-auth gate: does the caller hold the per-launch token?
+
+    Accepted from the cclaunch cookie, a ?token= query param, or an explicit
+    token (WS first frame / JSON body). Always True when the gate is off.
+    """
+    if _server_launch_token is None:
+        return True
+    for tok in (body_token, _cookie_value(cookie_str, _LAUNCH_COOKIE),
+                _query_value(query, "token")):
+        if tok and hmac.compare_digest(str(tok), _server_launch_token):
+            return True
+    return False
+
+
 def _jwt_user_id(cookie_str: str) -> Optional[int]:
     """Return the chat-UI user id authenticated by the ccjwt cookie, or None.
 
@@ -617,7 +756,8 @@ def _jwt_user_id(cookie_str: str) -> Optional[int]:
     """
     uid: Optional[int] = None
     if _server_no_auth:
-        uid = 1
+        # Synthetic owner id — but only for callers holding the launch token.
+        uid = 1 if _launch_token_ok(cookie_str=cookie_str) else None
     else:
         try:
             from cheetahclaws.web.auth import decode_token
@@ -641,6 +781,72 @@ def _jwt_user_id(cookie_str: str) -> Optional[int]:
     if uid is not None:
         _req_ctx.user_id = uid
     return uid
+
+
+_ADMIN_ONLY_MSG = ("This action is restricted to admin users. The server "
+                   "owner can set \"web_nonadmin_privileged\": true in "
+                   "~/.cheetahclaws/config.json to allow all users.")
+
+_LAUNCH_GATED_PAGES = frozenset({"/", "/index.html", "/chat", "/lab"})
+
+
+def _launch_url_hint() -> str:
+    return ("Open the URL printed in the terminal when the server started "
+            "(it ends in ?token=...). To turn this check off entirely, set "
+            "\"web_no_auth_require_token\": false in "
+            "~/.cheetahclaws/config.json (not recommended: any website you "
+            "visit could then reach this server).")
+
+
+def _launch_gate(sock, path: str, query: str, cookie: str,
+                 origin: str) -> bool:
+    """--no-auth page gate. Returns True if a response was already sent.
+
+    ``?token=<launch token>`` → 302 to the same page without the token plus
+    an HttpOnly cookie, so the secret doesn't linger in the address bar or
+    history. A valid cookie passes through. Anything else gets a 401 page.
+    """
+    from urllib.parse import quote
+    q_tok = _query_value(query, "token")
+    if q_tok and hmac.compare_digest(q_tok, _server_launch_token or ""):
+        rest = "&".join(p for p in query.split("&")
+                        if p and not p.startswith("token="))
+        location = path + (f"?{rest}" if rest else "")
+        hdrs = (f"Location: {location}\r\n"
+                f"Set-Cookie: {_LAUNCH_COOKIE}="
+                f"{quote(_server_launch_token or '')}; Path=/; HttpOnly; "
+                f"SameSite=Strict\r\n"
+                f"Cache-Control: no-store\r\n"
+                f"Referrer-Policy: no-referrer\r\n")
+        _send_http(sock, "302 Found", "text/plain", b"", hdrs,
+                   request_origin=origin)
+        return True
+    if _launch_token_ok(cookie_str=cookie):
+        return False
+    import html as _html
+    body = ("<!DOCTYPE html><html><head><meta charset='utf-8'>"
+            "<title>CheetahClaws — access token required</title></head>"
+            "<body style='font-family:sans-serif;background:#0a0a0a;"
+            "color:#e4e4e7;padding:2rem'><h2>Access token required</h2>"
+            f"<p>{_html.escape(_launch_url_hint())}</p></body></html>")
+    _send_http(sock, "401 Unauthorized", "text/html; charset=utf-8",
+               body.encode(), request_origin=origin)
+    return True
+
+
+def _is_admin(uid: Optional[int]) -> bool:
+    """True if `uid` is a chat-UI admin. The --no-auth owner is always admin."""
+    if uid is None:
+        return False
+    if _server_no_auth:
+        return True
+    try:
+        from cheetahclaws.web.db import init_db, repo as dbrepo
+        init_db()
+        user = dbrepo.get_user(uid)
+    except Exception:  # noqa: BLE001
+        return False
+    return bool(user and user.get("is_admin"))
 
 
 def _require_user(sock, cookie_str: str, origin: str) -> Optional[int]:
@@ -762,8 +968,11 @@ def _handle_websocket(sock: socket.socket, extra: bytes,
             except (json.JSONDecodeError, KeyError):
                 pass
         if not authed:
+            err = {"error": "auth required"}
+            if _server_no_auth:
+                err["hint"] = _launch_url_hint()
             try:
-                _ws_send(bsock, b'{"error":"auth required"}', opcode=0x01,
+                _ws_send(bsock, json.dumps(err).encode(), opcode=0x01,
                          lock=send_lock)
                 _ws_send(bsock, struct.pack("!H", 1008), opcode=0x08,
                          lock=send_lock)
@@ -1008,6 +1217,7 @@ def _handle_connection(sock: socket.socket, addr: tuple) -> None:
     _req_ctx.peer = f"{addr[0]}:{addr[1]}" if addr else None
     _req_ctx.logged = False
     _req_ctx.set_csrf = ""
+    _req_ctx.headers = {}
     try:
         sock.settimeout(30)
         raw = _recv_until(sock, b"\r\n\r\n")
@@ -1045,6 +1255,27 @@ def _handle_connection(sock: socket.socket, addr: tuple) -> None:
 
         origin = headers.get("origin", "")
         cookie = headers.get("cookie", "")
+        _req_ctx.headers = headers
+
+        # Origin gate: a browser on another site must not be able to open a
+        # WebSocket (PTY / chat events), attach to a PTY stream, or make
+        # state-changing requests. WebSockets are exempt from CORS and, in
+        # --no-auth mode, carry no credential — Origin is the only signal.
+        is_upgrade = "upgrade" in headers.get("connection", "").lower()
+        if ((method in ("POST", "PUT", "PATCH", "DELETE") or is_upgrade
+                or path == "/api/stream")
+                and not _origin_allowed(origin, headers)):
+            try:
+                from cheetahclaws.web.logging_setup import get_logger, incr
+                incr("origin_rejected_total")
+                get_logger("server").warning(
+                    "origin_rejected", extra={"origin": origin, "path": path})
+            except Exception:  # noqa: BLE001
+                pass
+            _send_http(sock, "403 Forbidden", "application/json",
+                       _origin_rejection_body(origin))
+            sock.close()
+            return
 
         # CSRF: caller has no token yet → mint one and attach to every
         # response on this connection so the first GET / POST/PUT/PATCH /
@@ -1102,8 +1333,8 @@ def _handle_connection(sock: socket.socket, addr: tuple) -> None:
                 cors_hdrs = (
                     f"Access-Control-Allow-Origin: {cors_origin}\r\n"
                     f"Access-Control-Allow-Credentials: true\r\n"
-                    f"Access-Control-Allow-Methods: GET, POST, PATCH, OPTIONS\r\n"
-                    f"Access-Control-Allow-Headers: Content-Type\r\n"
+                    f"Access-Control-Allow-Methods: GET, POST, PATCH, DELETE, OPTIONS\r\n"
+                    f"Access-Control-Allow-Headers: Content-Type, X-CSRF-Token\r\n"
                     f"Vary: Origin\r\n"
                 )
             _send_http(sock, "204 No Content", "text/plain", b"",
@@ -1111,7 +1342,9 @@ def _handle_connection(sock: socket.socket, addr: tuple) -> None:
             sock.close()
             return
 
-        # ── Ops endpoints (unauthenticated) ─────────────────────────
+        # ── Ops endpoints ────────────────────────────────────────────
+        # /health is always public (container healthchecks, load balancers).
+        # /metrics requires auth unless "web_public_metrics": true.
 
         if path == "/health" and method == "GET":
             db_ok = True
@@ -1139,6 +1372,17 @@ def _handle_connection(sock: socket.socket, addr: tuple) -> None:
             return
 
         if path == "/metrics" and method == "GET":
+            if (not _web_settings.get("public_metrics")
+                    and _jwt_user_id(cookie) is None
+                    and not _check_auth(query, cookie_str=cookie)):
+                _send_http(sock, "401 Unauthorized", "application/json",
+                           json.dumps({"error": (
+                               "auth required (set \"web_public_metrics\": "
+                               "true in config to expose /metrics without "
+                               "auth)")}).encode(),
+                           request_origin=origin)
+                sock.close()
+                return
             # Prometheus text exposition format (v0.0.4)
             try:
                 from cheetahclaws.web.logging_setup import snapshot, uptime_seconds
@@ -1167,6 +1411,13 @@ def _handle_connection(sock: socket.socket, addr: tuple) -> None:
             sock.close()
             return
 
+        # ── --no-auth launch-token gate for HTML pages ──────────────
+        if (method == "GET" and path in _LAUNCH_GATED_PAGES
+                and _server_no_auth and _server_launch_token is not None):
+            if _launch_gate(sock, path, query, cookie, origin):
+                sock.close()
+                return
+
         # ── Chat-UI auth (JWT-based, separate from terminal /api/auth) ──
 
         # GET /api/auth/bootstrap — does any user exist yet?
@@ -1180,12 +1431,17 @@ def _handle_connection(sock: socket.socket, addr: tuple) -> None:
                 sock.close()
                 return
             _send_json(sock, {"has_users": has_users,
-                              "no_auth": _server_no_auth},
+                              "no_auth": _server_no_auth,
+                              "open_registration": bool(
+                                  not has_users
+                                  or _web_settings.get("open_registration"))},
                        request_origin=origin)
             sock.close()
             return
 
-        # POST /api/auth/register — create user (open in v1; first user → admin)
+        # POST /api/auth/register — create user. The first user becomes admin;
+        # after that only a signed-in admin may create accounts, unless
+        # "web_open_registration": true restores open self-sign-up.
         if path == "/api/auth/register" and method == "POST":
             username = (body_json.get("username") or "").strip()
             password = body_json.get("password") or ""
@@ -1199,25 +1455,49 @@ def _handle_connection(sock: socket.socket, addr: tuple) -> None:
                 from cheetahclaws.web.db import init_db, repo as dbrepo
                 from cheetahclaws.web.auth import hash_password, issue_token, build_cookie
                 init_db()
-                if dbrepo.get_user_by_username(username) is not None:
-                    _send_http(sock, "409 Conflict", "application/json",
-                               b'{"error":"username taken"}',
-                               request_origin=origin)
-                    sock.close()
-                    return
-                is_admin = dbrepo.user_count() == 0
-                user = dbrepo.create_user(username, hash_password(password),
-                                          is_admin=is_admin)
-                token = issue_token(user["id"], user["username"])
+                # Serialise so two racing first-visitors can't both become
+                # admin, and the open/closed decision matches the insert.
+                with _register_lock:
+                    is_admin = dbrepo.user_count() == 0
+                    by_admin = False
+                    if not is_admin:
+                        by_admin = _is_admin(_jwt_user_id(cookie))
+                        if (not by_admin
+                                and not _web_settings.get("open_registration")):
+                            _send_http(
+                                sock, "403 Forbidden", "application/json",
+                                json.dumps({"error": (
+                                    "Registration is closed. Ask an admin to "
+                                    "create your account, or the server owner "
+                                    "can set \"web_open_registration\": true "
+                                    "in ~/.cheetahclaws/config.json to allow "
+                                    "self-sign-up.")}).encode(),
+                                request_origin=origin)
+                            sock.close()
+                            return
+                    if dbrepo.get_user_by_username(username) is not None:
+                        _send_http(sock, "409 Conflict", "application/json",
+                                   b'{"error":"username taken"}',
+                                   request_origin=origin)
+                        sock.close()
+                        return
+                    user = dbrepo.create_user(username,
+                                              hash_password(password),
+                                              is_admin=is_admin)
                 from cheetahclaws.web.logging_setup import get_logger, incr
                 incr("auth_registrations_total")
                 get_logger("auth").info("register", extra={
                     "username": user["username"], "user_id": user["id"],
-                    "is_admin": is_admin,
+                    "is_admin": is_admin, "by_admin": by_admin,
                 })
+                # An admin creating an account for someone else stays signed
+                # in as themselves — don't swap their session cookie.
+                extra = ("" if by_admin
+                         else build_cookie(issue_token(user["id"],
+                                                       user["username"])))
                 _send_http(sock, "200 OK", "application/json",
                            json.dumps({"ok": True, "user": user}).encode(),
-                           extra_headers=build_cookie(token),
+                           extra_headers=extra,
                            request_origin=origin)
             except Exception as exc:  # noqa: BLE001
                 _send_http(sock, "500 Internal Server Error",
@@ -1481,6 +1761,19 @@ def _handle_connection(sock: socket.socket, addr: tuple) -> None:
 
         # ── /api/lab/* routes (research lab) ────────────────────────
         if path.startswith("/api/lab"):
+            # Lab runs spend the owner's API budget and run experiments, so
+            # require a signed-in user; starting/aborting runs is admin-only
+            # unless "web_nonadmin_privileged": true.
+            uid = _require_user(sock, cookie, origin)
+            if uid is None:
+                return
+            if (method != "GET" and not _is_admin(uid)
+                    and not _web_settings.get("nonadmin_privileged")):
+                _send_http(sock, "403 Forbidden", "application/json",
+                           json.dumps({"error": _ADMIN_ONLY_MSG}).encode(),
+                           request_origin=origin)
+                sock.close()
+                return
             try:
                 from cheetahclaws.web.lab_api import dispatch as _lab_dispatch
                 from cheetahclaws.config import load_config as _load_cfg
@@ -1871,6 +2164,12 @@ def _handle_connection(sock: socket.socket, addr: tuple) -> None:
             elif method == "PATCH" and chat_sess:
                 try:
                     updated = chat_sess.update_config(body_json.get("config", {}))
+                except PermissionError as exc:
+                    _send_http(
+                        sock, "403 Forbidden", "application/json",
+                        json.dumps({"error": str(exc)}).encode(),
+                        request_origin=origin,
+                    )
                 except ValueError as exc:
                     _send_http(
                         sock, "400 Bad Request", "application/json",
@@ -1995,6 +2294,28 @@ def _reap_stale_sessions() -> None:
             pass
 
 
+def _load_web_settings(extra_origins=None) -> dict:
+    """Read the web security knobs from config.json + environment."""
+    try:
+        from cheetahclaws.config import load_config
+        cfg = load_config()
+    except Exception:  # noqa: BLE001
+        cfg = {}
+    origins = (_parse_origin_list(cfg.get("web_allowed_origins"))
+               | _parse_origin_list(
+                   os.environ.get("CHEETAHCLAWS_WEB_ALLOWED_ORIGINS", ""))
+               | _parse_origin_list(extra_origins))
+    return {
+        "allowed_origins": origins,
+        "open_registration": bool(cfg.get("web_open_registration", False)),
+        "public_metrics": bool(cfg.get("web_public_metrics", False)),
+        "nonadmin_privileged": bool(cfg.get("web_nonadmin_privileged",
+                                            False)),
+        "require_launch_token": bool(cfg.get("web_no_auth_require_token",
+                                             True)),
+    }
+
+
 def _bind_port(host: str, preferred: Optional[int]) -> tuple[socket.socket, int]:
     """Bind a listening socket. When `preferred` is None we try the default
     port first and fall back to an OS-chosen free port if it's taken — so
@@ -2022,8 +2343,16 @@ def start_web_server(
     port: Optional[int] = None,
     host: str = "127.0.0.1",
     no_auth: bool = False,
+    allowed_origins=None,
 ) -> None:
+    """Run the web server (blocking).
+
+    ``allowed_origins``: extra browser origins allowed to make cross-origin
+    requests, on top of ``web_allowed_origins`` in config and the
+    comma-separated $CHEETAHCLAWS_WEB_ALLOWED_ORIGINS.
+    """
     global _server_password, _server_no_auth, _server_cmd
+    global _server_launch_token
 
     # Guard against recursive startup (e.g. shell alias maps
     # cheetahclaws → cheetahclaws --web)
@@ -2035,6 +2364,13 @@ def start_web_server(
 
     _server_password = None if no_auth else _generate_password()
     _server_no_auth = no_auth
+    settings = _load_web_settings(allowed_origins)
+    _web_settings.update(settings)
+    # --no-auth still requires a per-launch secret unless explicitly
+    # disabled — see the comment on _server_launch_token.
+    _server_launch_token = (_generate_password()
+                            if no_auth and settings["require_launch_token"]
+                            else None)
 
     # Install structured logging first so later errors are captured correctly.
     try:
@@ -2083,8 +2419,13 @@ def start_web_server(
 
     print(f"\n  \033[36mCheetahClaws Web Terminal\033[0m", flush=True)
     print(f"  \033[2m{'─' * 40}\033[0m", flush=True)
-    print(f"  Terminal: \033[1mhttp://localhost:{port}\033[0m", flush=True)
-    print(f"  Chat UI:  \033[1mhttp://localhost:{port}/chat\033[0m", flush=True)
+    # In --no-auth mode the printed URLs carry the launch token; opening one
+    # swaps it for a cookie. The desktop sidecar parses it from this line.
+    tok_q = f"?token={_server_launch_token}" if _server_launch_token else ""
+    print(f"  Terminal: \033[1mhttp://localhost:{port}{'/' + tok_q if tok_q else ''}\033[0m",
+          flush=True)
+    print(f"  Chat UI:  \033[1mhttp://localhost:{port}/chat{tok_q}\033[0m",
+          flush=True)
     if host == "0.0.0.0":
         print(f"  Host:     \033[33m0.0.0.0 (network accessible)\033[0m", flush=True)
     if not no_auth:
@@ -2098,8 +2439,17 @@ def start_web_server(
                 print(f"  Chat UI:  \033[2m{_chat_user_count} user account"
                       f"{'s' if _chat_user_count != 1 else ''} registered"
                       f"\033[0m", flush=True)
+    elif _server_launch_token:
+        print(f"  Auth:     \033[33mdisabled\033[0m \033[2m(open the URLs "
+              f"above — they carry a per-launch access token)\033[0m",
+              flush=True)
     else:
-        print(f"  Auth:     \033[33mdisabled\033[0m", flush=True)
+        print(f"  Auth:     \033[31mdisabled, no launch token\033[0m "
+              f"\033[2m(web_no_auth_require_token=false)\033[0m", flush=True)
+    if _web_settings["allowed_origins"]:
+        print(f"  Origins:  \033[2m"
+              f"{', '.join(sorted(_web_settings['allowed_origins']))}"
+              f"\033[0m", flush=True)
     print(f"  \033[2m{'─' * 40}\033[0m", flush=True)
     print(f"  \033[2mPress Ctrl+C to stop\033[0m\n", flush=True)
 

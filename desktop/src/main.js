@@ -60,7 +60,8 @@ async function createWindow() {
   } catch (err) {
     return showFatal(err);
   }
-  console.log('[desktop] server ready at', sidecar.url);
+  // sidecar.url carries the per-launch access token; keep it out of logs.
+  console.log('[desktop] server ready on port', sidecar.port);
 
   if (mainWindow && !mainWindow.isDestroyed()) {
     await mainWindow.loadURL(sidecar.url);
