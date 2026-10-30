@@ -373,6 +373,50 @@ def test_brave_skips_without_key(monkeypatch):
         brave.search("q", 5, {})
 
 
+def test_serply_scholar_skips_without_key(monkeypatch):
+    from cheetahclaws.research.sources import SourceSkipped, serply_scholar
+    monkeypatch.delenv("SERPLY_API_KEY", raising=False)
+    with pytest.raises(SourceSkipped):
+        serply_scholar.search("q", 5, {})
+
+
+def test_serply_scholar_parses_citations_and_year(monkeypatch):
+    from datetime import datetime, timezone
+    from cheetahclaws.research.sources import serply_scholar as sps
+    from cheetahclaws.research.time_range import TimeRange
+    monkeypatch.setenv("SERPLY_API_KEY", "k")
+    fixture = {"articles": [
+        {
+            "title": "Retrieval-augmented generation for knowledge-intensive nlp tasks",
+            "link": "https://proceedings.neurips.cc/paper/2020/hash/6b49-Abstract.html",
+            "doc": {"link": "https://proceedings.neurips.cc/paper/2020/file/6b49-Paper.pdf"},
+            "author": {
+                "names": "P Lewis, E Perez, A Piktus, F Petroni\u2026\xa0- Advances in neural\xa0\u2026, 2020 - proceedings.neurips.cc",
+                "authors": [{"name": n} for n in ("P Lewis", "E Perez", "A Piktus", "F Petroni")],
+            },
+            "extras": {"citations": {"count": "Cited by 31921",
+                                     "link": "https://scholar.google.com/scholar?cites=1"}},
+        },
+        {"title": "No link", "link": ""},
+        {"title": "Book", "link": "https://example.org/book",
+         "author": {"names": "J Doe - Some Press, 2019 - example.org"}},
+    ]}
+    tr = TimeRange(since=datetime(2019, 1, 1, tzinfo=timezone.utc),
+                   until=datetime(2021, 1, 1, tzinfo=timezone.utc))
+    with mock.patch("cheetahclaws.research.sources.serply_scholar.get",
+                    return_value=fixture) as g:
+        rs = sps.search("rag", 5, {}, time_range=tr)
+    params = g.call_args.kwargs["params"]
+    assert (params["as_ylo"], params["as_yhi"]) == (2019, 2021)
+    assert g.call_args.kwargs["headers"]["X-Api-Key"] == "k"
+    assert len(rs) == 2
+    assert rs[0].engagement_raw == 31921
+    assert rs[0].published == "2020-01-01"
+    assert rs[0].author == "P Lewis, E Perez, A Piktus, +1 more"
+    assert rs[0].extra["pdf_url"].endswith("Paper.pdf")
+    assert (rs[1].engagement_raw, rs[1].published, rs[1].author) == (0, "2019-01-01", "J Doe")
+
+
 def test_sec_edgar_builds_filing_url():
     from cheetahclaws.research.sources import sec_edgar
     fixture = {"hits": {"hits": [{
