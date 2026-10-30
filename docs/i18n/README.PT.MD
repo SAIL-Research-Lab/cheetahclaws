@@ -183,7 +183,7 @@ O Claude Code é um assistente de IA para codificação poderoso e de nível de 
 | Modo Desenvolvedor SSJ | `/ssj` — menu de poder persistente encadeando Brainstorm, Worker, Review, Trading, Agent, Video/TTS, Monitor, etc. |
 | Agente de trading | `/trading` análise multiagente, backtesting, calibração de paper-trade, portfólios MV. [Guia](../guides/trading.md) |
 | Monitor | `/monitor` assina tópicos monitorados por IA em uma agenda (arxiv / ações / cripto / notícias / personalizado), envia relatórios para pontes/console |
-| Pesquisa (múltiplas fontes) | `/research` se ramifica em **20 fontes** com tabela de calor de atenção, extração de entidades, sparkline de tendência, modo de comparação. [Guia](../guides/research.md) |
+| Pesquisa (múltiplas fontes) | `/research` se ramifica em **21 fontes** com tabela de calor de atenção, extração de entidades, sparkline de tendência, modo de comparação. [Guia](../guides/research.md) |
 | Agentes autônomos | `/agent` loops em segundo plano a partir de templates Markdown; resumos de iteração enviados via ponte; proteção contra estagnação |
 | Pontes + controle remoto | Telegram · WeChat · Slack · QQ — chat de ida e volta, passagem de comandos slash, fila de trabalhos por ponte (`!jobs`/`!retry`/`!cancel`). [Guia](../guides/bridges.md) |
 | Voz / Visão / Vídeo / TTS | Whisper offline `/voice`; visão de área de transferência `/image` (local + nuvem); fábricas de conteúdo `/video` + `/tts`. [Guia](../guides/voice-and-video.md) |

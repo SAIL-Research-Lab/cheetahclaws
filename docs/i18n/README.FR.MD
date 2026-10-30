@@ -183,7 +183,7 @@ Claude Code est un assistant de codage IA puissant et de qualité production —
 | Mode développeur SSJ | `/ssj` — menu de puissance persistant enchaînant Brainstorm, Worker, Review, Trading, Agent, Video/TTS, Monitor, etc. |
 | Agent de trading | `/trading` analyse multi-agents, backtesting, calibration en paper-trade, portefeuilles MV. [Guide](../guides/trading.md) |
 | Monitor | `/monitor` s'abonne à des sujets surveillés par IA selon un calendrier (arxiv / bourse / crypto / actualités / personnalisé), pousse des rapports vers les passerelles/console |
-| Recherche (multi-sources) | `/research` s'étale sur **20 sources** avec tableau de chaleur d'attention, extraction d'entités, sparkline de tendance, mode comparaison. [Guide](../guides/research.md) |
+| Recherche (multi-sources) | `/research` s'étale sur **21 sources** avec tableau de chaleur d'attention, extraction d'entités, sparkline de tendance, mode comparaison. [Guide](../guides/research.md) |
 | Agents autonomes | `/agent` boucles en arrière-plan à partir de modèles Markdown ; résumés d'itérations poussés via passerelle ; garde-fou d'arrêt en cas de stagnation |
 | Passerelles + contrôle à distance | Telegram · WeChat · Slack · QQ — aller-retour de chat, passthrough des commandes slash, file d'attente de jobs par passerelle (`!jobs`/`!retry`/`!cancel`). [Guide](../guides/bridges.md) |
 | Voix / Vision / Vidéo / TTS | Whisper hors ligne `/voice` ; vision du presse-papiers `/image` (local + cloud) ; usines de contenu `/video` + `/tts`. [Guide](../guides/voice-and-video.md) |

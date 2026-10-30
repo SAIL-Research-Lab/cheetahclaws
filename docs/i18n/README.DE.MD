@@ -183,7 +183,7 @@ Claude Code ist ein leistungsstarker, produktionsreifer KI-Coding-Assistent – 
 | SSJ Developer Mode | `/ssj` – persistentes Power-Menü, das Brainstorm, Worker, Review, Trading, Agent, Video/TTS, Monitor usw. verkettet |
 | Trading-Agent | `/trading` Multi-Agent-Analyse, Backtesting, Paper-Trade-Kalibrierung, MV-Portfolios. [Anleitung](../guides/trading.md) |
 | Monitor | `/monitor` abonniert KI-überwachte Themen nach Zeitplan (arxiv / stock / crypto / news / custom), sendet Berichte an Brücken/Konsole |
-| Research (mehrquellig) | `/research` fächert auf **20 Quellen** auf, mit Aufmerksamkeits-Heat-Tabelle, Entitätsextraktion, Trend-Sparkline, Vergleichsmodus. [Anleitung](../guides/research.md) |
+| Research (mehrquellig) | `/research` fächert auf **21 Quellen** auf, mit Aufmerksamkeits-Heat-Tabelle, Entitätsextraktion, Trend-Sparkline, Vergleichsmodus. [Anleitung](../guides/research.md) |
 | Autonome Agenten | `/agent` Hintergrundschleifen aus Markdown-Vorlagen; Iterationszusammenfassungen über Brücke gesendet; Stagnations-Stopp-Schutz |
 | Brücken + Fernsteuerung | Telegram · WeChat · Slack · QQ – Chat-Roundtrip, Slash-Durchreichung, Job-Warteschlange pro Brücke (`!jobs`/`!retry`/`!cancel`). [Anleitung](../guides/bridges.md) |
 | Voice / Vision / Video / TTS | Offline-Whisper `/voice`; `/image` Zwischenablage-Vision (lokal + Cloud); `/video` + `/tts` Content-Fabriken. [Anleitung](../guides/voice-and-video.md) |
