@@ -186,7 +186,7 @@ Claude Code 是一款强大的、生产级的 AI 编码助手 —— 但它的�
 | SSJ 开发者模式 | `/ssj` —— 持久化的强力菜单，串联 Brainstorm、Worker、Review、Trading、Agent、Video/TTS、Monitor 等 |
 | 交易 agent | `/trading` 多 agent 分析、回测、模拟盘校准、MV 组合。[指南](../guides/trading.md) |
 | Monitor | `/monitor` 按计划订阅 AI 监测的主题（arxiv / 股票 / 加密 / 新闻 / 自定义），将报告推送到桥接/控制台 |
-| Research（多来源） | `/research` 扇出到 **20 个来源**，带注意力热度表、实体提取、趋势迷你图、对比模式。[指南](../guides/research.md) |
+| Research（多来源） | `/research` 扇出到 **21 个来源**，带注意力热度表、实体提取、趋势迷你图、对比模式。[指南](../guides/research.md) |
 | 自主 agent | `/agent` 从 Markdown 模板运行后台循环；迭代摘要通过桥接推送；停滞停止保护 |
 | 桥接 + 远程控制 | Telegram · 微信 · Slack · QQ —— 聊天往返、斜杠透传、每桥接的作业队列（`!jobs`/`!retry`/`!cancel`）。[指南](../guides/bridges.md) |
 | 语音 / 视觉 / 视频 / TTS | 离线 Whisper `/voice`；`/image` 剪贴板视觉（本地 + 云端）；`/video` + `/tts` 内容工厂。[指南](../guides/voice-and-video.md) |

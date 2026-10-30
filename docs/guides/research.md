@@ -1,6 +1,6 @@
 # Research — multi-source topic research
 
-`/research <topic>` fans out to up to **20 sources** in parallel, ranks
+`/research <topic>` fans out to up to **21 sources** in parallel, ranks
 results by real engagement (citations, stars, upvotes, points, USD
 volume, HF paper upvotes, Twitter likes, B站播放, 微博赞, 小红书赞, 知乎赞),
 dedupes cross-source, and optionally asks the active model to
@@ -42,7 +42,7 @@ information on an academic, technical, financial, news, or social topic.
 /reports path 3                  # print file path
 ```
 
-No configuration required — 13 of 20 sources work out of the box.
+No configuration required — 13 of 21 sources work out of the box.
 
 ## Sources
 
@@ -222,7 +222,7 @@ without waiting for or paying for an LLM synthesis round trip.
 Broad topics ("frontier LLM benchmarks", "AI agent frameworks") have many
 angles — a single query misses most. `--expand [N]` asks the active model
 for N distinct subqueries (N defaults to 4, capped at 6), runs each in
-parallel across all 20 sources, then merges into a single ranked set
+parallel across all 21 sources, then merges into a single ranked set
 before synthesis.
 
 Example expansion for `frontier LLM benchmarks`:
@@ -304,7 +304,7 @@ Subscription ID format:
   `90d`, `6m`, `1y`)
 
 Each weekly run:
-1. Fans out to all 20 sources
+1. Fans out to all 21 sources
 2. Filters by the window you picked
 3. Renders the cross-platform attention heat table + sparkline
 4. Writes a saved report (under `~/.cheetahclaws/research_reports/`)
