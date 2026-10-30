@@ -25,6 +25,8 @@ class ToolDef:
         profiles: optional tool-surface profiles this tool belongs to.  ``None``
             applies the built-in classification for known tools; third-party
             tools default to ``full`` so they are never exposed accidentally.
+        max_output: optional per-tool upper bound on result chars; the
+            context-scaled cap applies on top of it.
     """
     name: str
     schema: Dict[str, Any]
@@ -32,6 +34,7 @@ class ToolDef:
     read_only: bool = False
     concurrent_safe: bool = False
     profiles: Optional[FrozenSet[str]] = None
+    max_output: Optional[int] = None
 
 
 # --------------- internal state ---------------
@@ -222,8 +225,51 @@ def get_profile_tool_names(
     return frozenset(names)
 
 
-def _effective_output_cap(config: Dict[str, Any], max_output: int) -> int:
-    """Keep an individual tool result below model-context safety limits."""
+# Context windows at or below this size keep the original conservative cap
+# (16K reserved for prompt/schemas, 0.5x CJK safety, capped at 7K chars).
+_SMALL_CONTEXT_TOKENS = 32768
+# Default share of the context window one tool result may occupy on larger
+# models, and the chars-per-token conversion used for it.  2 chars/token sits
+# between code (~3) and CJK (~1) so a result costs about ``fraction`` of the
+# window for code and at most ~2x that in the CJK worst case.
+_DEFAULT_TOOL_OUTPUT_CTX_FRACTION = 0.10
+_TOOL_OUTPUT_CHARS_PER_TOKEN = 2
+# Absolute ceiling for a single tool result regardless of window size.
+_DEFAULT_TOOL_OUTPUT_MAX_CHARS = 100_000
+
+
+def _legacy_output_cap(declared_ctx: int) -> int:
+    # Reserve 16K for system prompt + tool schemas + framing + headroom.
+    # 0.5x for CJK-safety (1 char ~ 1 token worst case).
+    safe_ctx = min(declared_ctx, 30000)
+    return max(2000, int((safe_ctx - 16000) * 0.5))
+
+
+def _config_number(config: Dict[str, Any], key: str, default, cast=float):
+    try:
+        value = (config or {}).get(key)
+        if value is None:
+            return default
+        return cast(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _effective_output_cap(config: Dict[str, Any], max_output: int | None) -> int:
+    """Keep an individual tool result below model-context safety limits.
+
+    Small windows (<= 32K tokens) keep the historical conservative cap.
+    Larger windows scale with the window: ``tool_output_context_fraction``
+    (default 0.10) of the context, converted at 2 chars/token, bounded by
+    the caller/tool ``max_output`` and ``tool_output_max_chars`` (default
+    100K chars).  Setting ``tool_output_context_fraction`` to 0 restores the
+    legacy fixed cap for every window size.
+    """
+    ceiling = _config_number(
+        config, "tool_output_max_chars", _DEFAULT_TOOL_OUTPUT_MAX_CHARS, int,
+    )
+    ceiling = max(1_000, ceiling)
+    bound = ceiling if max_output is None else min(int(max_output), ceiling)
     try:
         from cheetahclaws.compaction import get_context_limit
         model = config.get("model", "") if config else ""
@@ -231,30 +277,45 @@ def _effective_output_cap(config: Dict[str, Any], max_output: int) -> int:
         # own per-model limit apply; without it a custom model falls back to
         # the provider-wide default, which is unrelated to the model in use.
         declared_ctx = get_context_limit(model, config) or 32768
-        # Reserve 16K for system prompt + tool schemas + framing + headroom.
-        # 0.5× for CJK-safety (1 char ≈ 1 token worst case).
-        safe_ctx = min(declared_ctx, 30000)
-        effective_max = max(2000, int((safe_ctx - 16000) * 0.5))
-        return min(max_output, effective_max)
     except Exception:
         # Compaction module unavailable in some test contexts — retain the
         # static cap rather than failing dispatch.
-        return max_output
+        return bound if max_output is not None else 32000
+    legacy = _legacy_output_cap(declared_ctx)
+    fraction = _config_number(
+        config, "tool_output_context_fraction", _DEFAULT_TOOL_OUTPUT_CTX_FRACTION,
+    )
+    if declared_ctx <= _SMALL_CONTEXT_TOKENS or fraction <= 0:
+        return min(bound, legacy)
+    fraction = min(fraction, 0.5)
+    scaled = int(declared_ctx * fraction * _TOOL_OUTPUT_CHARS_PER_TOKEN)
+    return min(bound, max(legacy, scaled))
 
 
-def _truncate_result(
-    result: str,
-    params: Dict[str, Any],
-    max_output: int,
-    config: Dict[str, Any] | None = None,
-) -> str:
-    """Trim a result while retaining a useful beginning and ending."""
-    output_limit = max(1, int(max_output))
-    if len(result) <= output_limit:
-        return result
-    truncated = len(result)
-    file_hint = ""
-    fpath = (params or {}).get("file_path") if isinstance(params, dict) else None
+def _snap_head(text: str, budget: int) -> str:
+    """Leading ``budget`` chars, ending on a line boundary when one is close."""
+    head = text[:budget]
+    cut = head.rfind("\n")
+    if cut >= budget * 0.8:
+        return head[:cut + 1]
+    return head
+
+
+def _snap_tail(text: str, budget: int) -> str:
+    """Trailing ``budget`` chars, starting on a line boundary when one is close."""
+    if budget <= 0:
+        return ""
+    tail = text[-budget:]
+    cut = tail.find("\n")
+    if 0 <= cut <= budget * 0.2:
+        return tail[cut + 1:]
+    return tail
+
+
+def _more_hint(params: Dict[str, Any], config: Dict[str, Any] | None) -> str:
+    """Explain how the model can see the omitted part."""
+    params = params if isinstance(params, dict) else {}
+    fpath = params.get("file_path")
     if fpath and isinstance(fpath, str):
         active_names = (config or {}).get("_active_tool_names")
         profile = (config or {}).get("tool_profile")
@@ -263,29 +324,68 @@ def _truncate_result(
             if active_names is not None
             else profile in {"research", "full"}
         )
+        short_path = fpath[:160] + ("…" if len(fpath) > 160 else "")
         if summary_available:
-            short_path = fpath[:160] + ("…" if len(fpath) > 160 else "")
-            file_hint = (
+            return (
                 f" Tip: this came from `{short_path}` — call "
                 f"`SummarizeLargeFile(file_path='{short_path}')` to get a "
-                f"complete chunked + map-reduce summary that fits."
+                f"complete chunked + map-reduce summary that fits, or Read "
+                "with a narrower offset and limit."
             )
-        else:
-            short_path = fpath[:160] + ("…" if len(fpath) > 160 else "")
-            file_hint = (
-                f" Tip: this came from `{short_path}` — use Read again with "
-                "a narrower offset and limit."
-            )
-    marker = (
-        f"\n[... {truncated:,} chars truncated to keep total tool "
-        f"output ≤ {output_limit:,} chars (model context safety).{file_hint}]\n"
-    )
-    if len(marker) >= output_limit:
-        return marker[:output_limit]
-    visible_budget = output_limit - len(marker)
-    first = (visible_budget * 2) // 3
-    last = visible_budget - first
-    return result[:first] + marker + (result[-last:] if last else "")
+        return (
+            f" Tip: this came from `{short_path}` — use Read again with "
+            "a narrower offset and limit."
+        )
+    if isinstance(params.get("command"), str):
+        return (
+            " To see the omitted part, re-run piping through `grep`/`head`/"
+            "`tail -n N`, or redirect to a file and Read it with offset/limit."
+        )
+    if "pattern" in params:
+        return " Narrow the pattern or path to see the rest."
+    return ""
+
+
+def _truncate_result(
+    result: str,
+    params: Dict[str, Any],
+    max_output: int,
+    config: Dict[str, Any] | None = None,
+) -> str:
+    """Trim a result while retaining a useful beginning and ending.
+
+    Both ends are kept: the head shows what ran, the tail is where test
+    failures, tracebacks and summaries usually live.  The marker states how
+    much was omitted and how to see it.
+    """
+    output_limit = max(1, int(max_output))
+    if len(result) <= output_limit:
+        return result
+    truncated = len(result)
+    hint = _more_hint(params, config)
+
+    def _marker(omitted_chars: int, omitted_lines: int) -> str:
+        lines = f", {omitted_lines:,} lines" if omitted_lines else ""
+        return (
+            f"\n[... {omitted_chars:,} chars{lines} omitted from the middle "
+            f"of {truncated:,}; output truncated to keep total tool "
+            f"output ≤ {output_limit:,} chars (model context safety).{hint}]\n"
+        )
+
+    # Size the marker with worst-case numbers so the final text always fits.
+    probe = _marker(truncated, result.count("\n"))
+    if len(probe) >= output_limit:
+        short = f"\n[... {truncated:,} chars truncated]\n"
+        return (short if len(short) <= output_limit else probe)[:output_limit]
+    visible_budget = output_limit - len(probe)
+    # Favour the head slightly but keep a substantial tail (errors at end).
+    first_budget = (visible_budget * 3) // 5
+    last_budget = visible_budget - first_budget
+    head = _snap_head(result, first_budget)
+    tail = _snap_tail(result, last_budget)
+    omitted = result[len(head):len(result) - len(tail)]
+    marker = _marker(len(omitted), omitted.count("\n"))
+    return head + marker + tail
 
 
 def _cache_put(key: str, value: str, generation: int) -> None:
@@ -307,7 +407,7 @@ def execute_tool(
     name: str,
     params: Dict[str, Any],
     config: Dict[str, Any],
-    max_output: int = 32000,
+    max_output: int | None = None,
 ) -> str:
     """Dispatch a tool call by name.
 
@@ -315,7 +415,10 @@ def execute_tool(
         name: tool name
         params: tool input parameters dict
         config: runtime configuration dict
-        max_output: maximum allowed output length in characters
+        max_output: maximum allowed output length in characters.  ``None``
+            (default) lets the cap scale with the model's context window
+            (see :func:`_effective_output_cap`); ``ToolDef.max_output``
+            further bounds it per tool.
 
     Returns:
         Tool result string, possibly truncated.
@@ -332,6 +435,11 @@ def execute_tool(
             "profile for this turn. Select a profile that includes it and retry."
         )
 
+    if tool.max_output is not None:
+        max_output = (
+            tool.max_output if max_output is None
+            else min(int(max_output), int(tool.max_output))
+        )
     output_cap = _effective_output_cap(config or {}, max_output)
 
     # Cache hit for read-only tools (same name + same params + same session).

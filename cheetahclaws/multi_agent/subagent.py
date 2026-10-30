@@ -1,15 +1,17 @@
 """Threaded sub-agent system for spawning nested agent loops."""
 from __future__ import annotations
 
+import inspect
 import os
 import uuid
 import queue
 import subprocess
 import tempfile
+import threading
 from concurrent.futures import ThreadPoolExecutor, Future
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import Callable, Dict, List, Optional, Any
 
 
 # ── Agent definition ───────────────────────────────────────────────────────
@@ -184,6 +186,218 @@ def get_agent_definition(name: str) -> Optional[AgentDefinition]:
     return load_agent_definitions().get(name)
 
 
+# ── Sub-agent permission policy ────────────────────────────────────────────
+#
+# A sub-agent runs its own agent loop in a worker thread, so nobody is
+# reading its event stream to answer a PermissionRequest.  Left unanswered,
+# ``PermissionRequest.granted`` stays False and every write is silently
+# "rejected by the user".  SubAgentPermissionPolicy answers instead:
+#
+#   1. parent session runs with auto-approve, or already granted this
+#      signature ("s"/"!" at a prompt)            → allow
+#   2. ``subagent_permission: "deny"``            → deny
+#   3. ``"auto-edits"`` and a file-edit tool       → allow
+#   4. ``"inherit"`` (default): what the parent would decide without asking —
+#      read-only tools allowed (unless permission_mode is "manual"), and file
+#      edits inside the sub-agent's own isolated worktree allowed
+#   5. an interactive parent callback (config ``_permission_callback``,
+#      ``fn(description, config[, signature]) -> bool``) is available
+#                                                  → ask the user, labelled
+#                                                    with the sub-agent name
+#   6. otherwise                                   → deny, with a reason
+#
+# Every denial is recorded with its reason so the sub-agent's final result
+# tells the parent what was blocked and how to unblock it.
+
+SUBAGENT_PERMISSION_MODES = ("inherit", "auto-edits", "deny")
+_EDIT_TOOLS = frozenset({"Write", "Edit", "NotebookEdit"})
+# Interactive prompts from concurrent sub-agents must not interleave.
+_PROMPT_LOCK = threading.Lock()
+
+
+def _tool_from_request(req) -> tuple:
+    """Return (tool_name, path) recovered from a PermissionRequest."""
+    sig = getattr(req, "signature", "") or ""
+    name, _, rest = sig.partition(":")
+    path = rest if name in _EDIT_TOOLS else ""
+    if not name:
+        desc = getattr(req, "description", "") or ""
+        if desc.startswith("Run: "):
+            name = "Bash"
+        elif desc.startswith("Write to: "):
+            name, path = "Write", desc[len("Write to: "):]
+        elif desc.startswith("Edit: "):
+            name, path = "Edit", desc[len("Edit: "):]
+        else:
+            name = desc.split("(", 1)[0].strip()
+    return name, path
+
+
+def _is_within(path: str, root: str) -> bool:
+    if not path or not root:
+        return False
+    try:
+        Path(path).expanduser().resolve().relative_to(Path(root).resolve())
+        return True
+    except (ValueError, OSError, RuntimeError):
+        return False
+
+
+def _tool_read_only(name: str) -> bool:
+    try:
+        from cheetahclaws.tool_registry import get_tool
+        tool = get_tool(name)
+        return bool(tool and tool.read_only)
+    except Exception:
+        return False
+
+
+def _call_permission_callback(fn: Callable, desc: str, config: dict, sig: str) -> bool:
+    """Invoke a 2- or 3-argument permission callback."""
+    try:
+        params = list(inspect.signature(fn).parameters.values())
+        accepts_sig = (len(params) >= 3 or any(
+            p.kind in (inspect.Parameter.VAR_POSITIONAL,
+                       inspect.Parameter.VAR_KEYWORD) for p in params))
+    except (TypeError, ValueError):
+        accepts_sig = False
+    if accepts_sig and sig:
+        return bool(fn(desc, config, sig))
+    return bool(fn(desc, config))
+
+
+@dataclass
+class SubAgentPermissionPolicy:
+    """Decides PermissionRequests raised inside a sub-agent (see above)."""
+    agent_name: str = ""
+    mode: str = "inherit"
+    permission_mode: str = "auto"
+    callback: Optional[Callable] = None
+    parent_grants: Any = field(default_factory=set)   # live set; read only
+    parent_auto_approve: bool = False
+    worktree_path: str = ""
+    callback_config: dict = field(default_factory=dict)
+    denials: list = field(default_factory=list)
+
+    @classmethod
+    def from_parent_config(cls, config: dict, agent_name: str = "",
+                           worktree_path: str = "") -> "SubAgentPermissionPolicy":
+        config = config or {}
+        mode = str(config.get("subagent_permission") or "inherit").strip().lower()
+        if mode not in SUBAGENT_PERMISSION_MODES:
+            mode = "inherit"
+        grants: Any = set()
+        try:
+            from cheetahclaws import runtime
+            if config.get("_session_id"):
+                grants = runtime.get_ctx(config).approved_sigs
+        except Exception:
+            pass
+        auto = False
+        try:
+            from cheetahclaws.permissions import auto_approve_on
+            auto = auto_approve_on(config)
+        except Exception:
+            pass
+        cb = config.get("_permission_callback")
+        return cls(
+            agent_name=agent_name,
+            mode=mode,
+            permission_mode=str(config.get("permission_mode") or "auto"),
+            callback=cb if callable(cb) else None,
+            parent_grants=grants,
+            parent_auto_approve=auto,
+            worktree_path=worktree_path,
+            callback_config=config,
+        )
+
+    def _deny(self, req, reason: str) -> bool:
+        req.granted = False
+        try:
+            req.reason = reason   # surfaced by loops that support it
+        except Exception:
+            pass
+        self.denials.append(f"{getattr(req, 'description', '')} — {reason}")
+        return False
+
+    def decide(self, req) -> bool:
+        """Set ``req.granted`` (and ``req.reason`` on denial); return it."""
+        sig = getattr(req, "signature", "") or ""
+        desc = getattr(req, "description", "") or ""
+        name, path = _tool_from_request(req)
+
+        if self.permission_mode != "manual":
+            if self.parent_auto_approve:
+                req.granted = True
+                return True
+            if sig and sig in (self.parent_grants or ()):
+                req.granted = True
+                return True
+        if self.mode == "deny":
+            return self._deny(req, (
+                "sub-agent escalations are disabled (subagent_permission="
+                "\"deny\"); report what you need in your final answer"))
+        if self.permission_mode != "manual":
+            if self.mode == "auto-edits" and name in _EDIT_TOOLS:
+                req.granted = True
+                return True
+            if name in _EDIT_TOOLS and _is_within(path, self.worktree_path):
+                req.granted = True
+                return True
+            if name and name not in _EDIT_TOOLS and name != "Bash" \
+                    and _tool_read_only(name):
+                req.granted = True
+                return True
+        if self.callback is not None:
+            label = f"[sub-agent {self.agent_name}] {desc}" if self.agent_name else desc
+            try:
+                with _PROMPT_LOCK:
+                    granted = _call_permission_callback(
+                        self.callback, label, self.callback_config, sig)
+            except Exception as e:
+                return self._deny(req, f"permission prompt failed: {e}")
+            if granted:
+                req.granted = True
+                return True
+            return self._deny(req, "the user rejected this operation")
+        hint = (
+            "no interactive approver is available for sub-agents; the parent "
+            "agent can perform this step itself, or the user can set "
+            "subagent_permission=\"auto-edits\", run with /auto, or use "
+            "isolation=\"worktree\" so edits stay in the sub-agent's worktree"
+        )
+        return self._deny(req, hint)
+
+    def denial_report(self) -> str:
+        if not self.denials:
+            return ""
+        lines = "\n".join(f"- {d}" for d in self.denials[:20])
+        more = len(self.denials) - 20
+        if more > 0:
+            lines += f"\n- … and {more} more"
+        return ("[Sub-agent permission denials — these operations did not "
+                f"run:]\n{lines}")
+
+    def system_note(self) -> str:
+        """Up-front explanation for the sub-agent when escalations may be
+        denied without a human in the loop."""
+        if self.callback is not None or (
+                self.parent_auto_approve and self.permission_mode != "manual"):
+            return ""
+        if self.mode == "auto-edits":
+            return ""
+        scope = ("file edits inside your worktree are allowed"
+                 if self.worktree_path and self.mode != "deny"
+                 else "file edits and non-read-only shell commands may be denied")
+        return (
+            "[Sub-agent permissions: you run without an interactive approver; "
+            f"{scope}. If an operation is denied, do not retry it — finish "
+            "what you can and list the blocked steps (with exact paths/"
+            "commands and intended changes) in your final answer so the "
+            "parent agent can apply them.]"
+        )
+
+
 # ── SubAgentTask ───────────────────────────────────────────────────────────
 
 @dataclass
@@ -200,6 +414,7 @@ class SubAgentTask:
     _cancel_flag: bool = False
     _future: Optional[Future] = field(default=None, repr=False)
     _inbox: Any = field(default_factory=queue.Queue, repr=False)  # for send_message
+    _permission_policy: Any = field(default=None, repr=False)
 
 
 # ── Worktree helpers ───────────────────────────────────────────────────────
@@ -294,6 +509,7 @@ class SubAgentManager:
         agent_def: Optional[AgentDefinition] = None,
         isolation: str = "",     # "" | "worktree"
         name: str = "",
+        parent_config: Optional[dict] = None,
     ) -> SubAgentTask:
         """Spawn a new sub-agent task.
 
@@ -305,6 +521,10 @@ class SubAgentManager:
             agent_def:    optional AgentDefinition with model/system_prompt/tools overrides
             isolation:    "" for normal, "worktree" for isolated git worktree
             name:         optional human-readable name (addressable via SendMessage)
+            parent_config: the parent's full config (incl. private keys such
+                          as ``_session_id``/``_permission_callback``) used to
+                          answer the sub-agent's PermissionRequests; defaults
+                          to ``config``.
 
         Returns:
             SubAgentTask tracking the spawned work.
@@ -362,6 +582,30 @@ class SubAgentManager:
                 task.result = f"Failed to create worktree: {e}"
                 return task
 
+        policy = SubAgentPermissionPolicy.from_parent_config(
+            parent_config if parent_config is not None else config,
+            agent_name=short_name, worktree_path=worktree_path,
+        )
+        task._permission_policy = policy
+        _note = policy.system_note()
+        if _note:
+            eff_system = eff_system.rstrip() + "\n\n" + _note
+
+        def _answer(event) -> None:
+            # Duck-typed so tests and alternative loops need not import agent.
+            if type(event).__name__ == "PermissionRequest" and \
+                    hasattr(event, "granted"):
+                try:
+                    policy.decide(event)
+                except Exception as e:   # never leave a request unanswered
+                    policy._deny(event, f"permission policy error: {e}")
+
+        def _with_denials(text):
+            report = policy.denial_report()
+            if not report:
+                return text
+            return f"{text}\n\n{report}" if text else report
+
         def _run():
             from cheetahclaws import agent as _agent_mod; AgentState = _agent_mod.AgentState
             task.status = "running"
@@ -373,6 +617,7 @@ class SubAgentManager:
                     cancel_check=lambda: task._cancel_flag,
                 )
                 for _event in gen:
+                    _answer(_event)
                     if task._cancel_flag:
                         break
 
@@ -380,7 +625,7 @@ class SubAgentManager:
                     task.status = "cancelled"
                     task.result = None
                 else:
-                    task.result = _extract_final_text(state.messages)
+                    task.result = _with_denials(_extract_final_text(state.messages))
                     task.status = "completed"
 
                 # Drain inbox: process any messages sent via SendMessage
@@ -393,10 +638,11 @@ class SubAgentManager:
                         cancel_check=lambda: task._cancel_flag,
                     )
                     for _ev in gen2:
+                        _answer(_ev)
                         if task._cancel_flag:
                             break
                     if not task._cancel_flag:
-                        task.result = _extract_final_text(state.messages)
+                        task.result = _with_denials(_extract_final_text(state.messages))
                         task.status = "completed"
 
             except Exception as e:
