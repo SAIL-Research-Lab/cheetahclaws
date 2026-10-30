@@ -17,6 +17,27 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
+def _isolate_trust_and_bridge_auth(tmp_path, monkeypatch):
+    """Keep workspace-trust state and bridge owner auto-binds out of the
+    real ~/.cheetahclaws (trust.json / config.json)."""
+    monkeypatch.delenv("CHEETAHCLAWS_TRUST_ALL", raising=False)
+    try:
+        from cheetahclaws import trust as _trust
+        trust_file = tmp_path / "_trust" / "trust.json"
+        monkeypatch.setattr(_trust, "_trust_file", lambda: trust_file)
+        monkeypatch.setattr(_trust, "_saved_config_trust_all", lambda: False)
+        _trust._warned.clear()
+    except Exception:
+        pass
+    try:
+        from cheetahclaws.bridges import auth as _bauth
+        monkeypatch.setattr(_bauth, "_persist", lambda config: None)
+        _bauth._last_refusal.clear()
+    except Exception:
+        pass
+
+
+@pytest.fixture(autouse=True)
 def _isolate_lab_output_dir(tmp_path, monkeypatch):
     """Redirect DEFAULT_OUTPUT_DIR to a tmp dir for the duration of the
     test. Without this, tests calling ``run_one_lab_session(topic="t", …)``

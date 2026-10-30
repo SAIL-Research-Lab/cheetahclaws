@@ -45,7 +45,9 @@ def run_terminal(
     """
     Execute `cmd` in a shell, streaming stdout+stderr back via send_fn.
 
-    Enabled by default; bridges already enforce owner-only (chat_id whitelist).
+    Enabled by default. ``shell=True`` is the feature (``!cmd`` is a remote
+    shell), so callers MUST gate on bridges.auth.is_authorized() before
+    reaching here — every bridge poll loop does so for all ``!`` commands.
     Set CHEETAHCLAWS_BRIDGE_TERMINAL=0 to hard-disable for sensitive deployments.
     NUL byte / length / hard-denylist guards still apply.
     """

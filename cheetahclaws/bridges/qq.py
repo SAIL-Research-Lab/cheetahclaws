@@ -537,6 +537,19 @@ def _qq_poll_loop(config: dict) -> str:
             sctx.qq_current_target_id = target_id
             sctx.qq_current_msg_type = msg_type
 
+            # ── Sender authorization (bridges/auth.py) ─────────────────
+            # Every path below (PTY input, permission replies, slash, !shell,
+            # agent jobs) is privileged, so unapproved senders stop here.
+            author_id = msg.get("author_id") or ""
+            from cheetahclaws.bridges import auth as _bauth
+            if not _bauth.is_authorized("qq", author_id, target_id, config,
+                                        is_private=(msg_type == "c2c")):
+                _bauth.log_refusal("qq", author_id, target_id)
+                print(clr(f"\n  ⛔ QQ [{author_id}] not in qq_allowed_users — ignored", "yellow"))
+                if _bauth.should_reply_refusal("qq", author_id):
+                    _qq_send(target_id, _bauth.refusal_text("qq", author_id), config, msg_type)
+                continue
+
             # ── Interactive PTY session ────────────────────────────────
             from cheetahclaws.bridges.interactive_session import (
                 InteractiveSession,
