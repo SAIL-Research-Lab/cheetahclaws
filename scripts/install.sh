@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # ── CheetahClaws Installer ──────────────────────────────────────────────
-# curl -fsSL https://raw.githubusercontent.com/SafeRL-Lab/cheetahclaws/main/scripts/install.sh | bash
+# curl -fsSL https://raw.githubusercontent.com/SAIL-Research-Lab/cheetahclaws/main/scripts/install.sh | bash
 #
 # Works on: Linux, macOS, WSL2, Android (Termux)
 # Requires: Python 3.10+, pip, git
 # ─────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
-REPO="https://github.com/SafeRL-Lab/cheetahclaws.git"
+REPO="https://github.com/SAIL-Research-Lab/cheetahclaws.git"
 INSTALL_DIR="$HOME/.cheetahclaws-src"
 MIN_PYTHON="3.10"
 

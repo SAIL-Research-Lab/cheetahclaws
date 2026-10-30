@@ -5,7 +5,7 @@ Thank you for your interest in contributing! This guide covers the architecture,
 ## Quick Start
 
 ```bash
-git clone git@github.com:SafeRL-Lab/cheetahclaws.git
+git clone git@github.com:SAIL-Research-Lab/cheetahclaws.git
 cd cheetahclaws
 pip install -r requirements.txt
 pip install pytest
@@ -192,4 +192,4 @@ Before submitting a PR:
 
 ## Questions?
 
-Open an issue or start a discussion on the [GitHub repo](https://github.com/SafeRL-Lab/cheetahclaws).
+Open an issue or start a discussion on the [GitHub repo](https://github.com/SAIL-Research-Lab/cheetahclaws).

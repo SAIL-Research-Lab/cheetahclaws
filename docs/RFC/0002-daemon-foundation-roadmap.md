@@ -1,7 +1,7 @@
 # Daemon Foundation Roadmap
 
 - **Status:** Tracking
-- **Refs:** [#68](https://github.com/SafeRL-Lab/cheetahclaws/issues/68), [RFC 0001 design note](./0001-daemon-design-note.md)
+- **Refs:** [#68](https://github.com/SAIL-Research-Lab/cheetahclaws/issues/68), [RFC 0001 design note](./0001-daemon-design-note.md)
 - **Last updated:** 2026-05-12 (all nine items landed: F-1, F-2, F-3, F-4 incl. #1/#2/#3/#4, F-5, F-6 Phase 1+2, F-7, F-8, F-9 incl. quota-pause)
 
 The "foundation PR" described at the end of [RFC 0001](./0001-daemon-design-note.md) is too big for one reviewable change (~5 KLoC including stdlib HTTP server, auth, JSON-RPC + SSE, SQLite schema, `daemon` CLI, bridges-into-daemon, subprocess-per-agent, and conservative cost defaults). This document splits it into nine stackable PRs and pins the acceptance criteria for each. Implementation follows this index in order; later items can land in parallel once F-1 and F-2 are merged.
@@ -23,7 +23,7 @@ The "foundation PR" described at the end of [RFC 0001](./0001-daemon-design-note
 ## F-1 — daemon skeleton
 
 **Scope.** Adopt the `daemon/` reference scaffolding from
-[`feature/daemon-spike`](https://github.com/SafeRL-Lab/cheetahclaws/tree/feature/daemon-spike)
+[`feature/daemon-spike`](https://github.com/SAIL-Research-Lab/cheetahclaws/tree/feature/daemon-spike)
 (`server`, `auth`, `originator`, `rpc`, `events`, `permission`, `methods`)
 **as-is** — those modules encode the contract the maintainer reviewed in
 PR #74.  Layer the foundation glue on top:
@@ -823,7 +823,7 @@ unit tests (which don't depend on a daemon being up).
 - **Tests.** Every PR ships unit tests; F-1, F-3, F-4, F-6/7/8 also ship `tests/e2e_daemon_<area>.py`.
 - **Docs.** Every PR updates the relevant section in `docs/architecture.md`. The "Daemon" header is created by F-1; subsequent PRs append.
 - **Config keys.** New keys go in `config.DEFAULTS`; documented in `docs/architecture.md`.
-- **Backwards compatibility.** Users who never run `cheetahclaws serve` see no behavior change until the eventual default flip — that flip is out of scope here and tracked in [#68](https://github.com/SafeRL-Lab/cheetahclaws/issues/68) as the "Phase D" item.
+- **Backwards compatibility.** Users who never run `cheetahclaws serve` see no behavior change until the eventual default flip — that flip is out of scope here and tracked in [#68](https://github.com/SAIL-Research-Lab/cheetahclaws/issues/68) as the "Phase D" item.
 
 ## Updating this document
 

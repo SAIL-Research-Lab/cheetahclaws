@@ -95,7 +95,7 @@ The wizard's trigger (`cli.py`) is: **first run** (`config.json` missing/empty) 
 ## 1. Get the source
 
 ```bash
-git clone https://github.com/SafeRL-Lab/cheetahclaws.git
+git clone https://github.com/SAIL-Research-Lab/cheetahclaws.git
 cd cheetahclaws
 ```
 

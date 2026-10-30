@@ -27,7 +27,7 @@ jobs:
           fetch-depth: 0
 
       - id: agent
-        uses: SafeRL-Lab/cheetahclaws@main     # pin a tag or SHA in production
+        uses: SAIL-Research-Lab/cheetahclaws@main     # pin a tag or SHA in production
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         with:
