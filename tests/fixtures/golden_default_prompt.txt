@@ -59,7 +59,7 @@ Return control to the user when:
 
 # Active Tool Surface
 - Profile: `full`
-- Enabled tools: `Agent`, `AskUserQuestion`, `Bash`, `CheckAgentResult`, `Edit`, `EnterPlanMode`, `ExitPlanMode`, `GetDiagnostics`, `Glob`, `Grep`, `ListAgentTasks`, `ListAgentTypes`, `MemoryDelete`, `MemoryList`, `MemorySave`, `MemorySearch`, `MemoryVerify`, `NotebookEdit`, `Read`, `ReadEmail`, `ReadImage`, `ReadPDF`, `ReadSpreadsheet`, `Research`, `SendEmail`, `SendMessage`, `Skill`, `SkillList`, `SleepTimer`, `SummarizeLargeFile`, `TaskCreate`, `TaskGet`, `TaskList`, `TaskUpdate`, `WebBrowse`, `WebFetch`, `WebSearch`, `Write`
+- Enabled tools: `Agent`, `ApplyPatch`, `AskUserQuestion`, `Bash`, `CheckAgentResult`, `Edit`, `EnterPlanMode`, `ExitPlanMode`, `GetDiagnostics`, `Glob`, `Grep`, `ListAgentTasks`, `ListAgentTypes`, `MemoryDelete`, `MemoryList`, `MemorySave`, `MemorySearch`, `MemoryVerify`, `MultiEdit`, `NotebookEdit`, `Read`, `ReadEmail`, `ReadImage`, `ReadPDF`, `ReadSpreadsheet`, `Research`, `SendEmail`, `SendMessage`, `Skill`, `SkillList`, `SleepTimer`, `SummarizeLargeFile`, `TaskCreate`, `TaskGet`, `TaskList`, `TaskUpdate`, `WebBrowse`, `WebFetch`, `WebSearch`, `Write`
 - Call only the enabled tools above; a tool mentioned elsewhere is not available unless it appears in this list.
 - For complex or multi-file work, use `EnterPlanMode` before making changes, then finish with `ExitPlanMode`.
 
