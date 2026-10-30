@@ -210,6 +210,7 @@ Claude Code は強力で本番グレードの AI コーディングアシスタ�
 | **MiniMax** | `MiniMax-Text-01` · `MiniMax-VL-01` · `abab6.5s-chat` | 256k–1M | `MINIMAX_API_KEY` |
 | **OpenRouter** _(400+ モデル、キー1つ)_ | `openrouter/deepseek/deepseek-v4-flash` · `openrouter/anthropic/claude-sonnet-4-6` · `openrouter/openai/gpt-5` | 様々 | `OPENROUTER_API_KEY` |
 | **Requesty** _(700+ モデル、キー1つ)_ | `requesty/openai/gpt-4o-mini` · `requesty/anthropic/claude-sonnet-4-6` · `requesty/claude-sonnet-4-6` | 様々 | `REQUESTY_API_KEY` |
+| **Runcrate** | `runcrate/deepseek-ai/DeepSeek-V4.1-Flash` · `runcrate/zai-org/GLM-5.3` · `runcrate/moonshotai/Kimi-K2.6` | 様々 | `RUNCRATE_API_KEY` |
 | **AWS Bedrock / Azure / Vertex** _(litellm 経由)_ | `litellm/<provider>/<model>` | 様々 | プロバイダー固有 |
 
 > **`openrouter/` ゲートウェイ:** 1つのキーでベンダーをまたぐ400以上のモデルにアクセスできます。モデル ID は OpenRouter のアップストリーム `<vendor>/<model>` パスをそのまま保持するため、呼び出しは二重プレフィックスになります: `openrouter/deepseek/deepseek-v4-flash`。どのアップストリームプロバイダー（および量子化）がリクエストを処理するかを固定するには、`@<provider>[/<quantization>]` を付加します — `openrouter/deepseek/deepseek-v4-flash@gmicloud/fp8` — これはモデル ID に連結されるのではなく、OpenRouter の `provider` リクエストボディオブジェクトとして送信されます。[usage.md](../guides/usage.md#openrouter-400-models-one-key) を参照。

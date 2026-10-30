@@ -210,6 +210,7 @@ Claude Code est un assistant de codage IA puissant et de qualité production —
 | **MiniMax** | `MiniMax-Text-01` · `MiniMax-VL-01` · `abab6.5s-chat` | 256k–1M | `MINIMAX_API_KEY` |
 | **OpenRouter** _(400+ modèles, une seule clé)_ | `openrouter/deepseek/deepseek-v4-flash` · `openrouter/anthropic/claude-sonnet-4-6` · `openrouter/openai/gpt-5` | variable | `OPENROUTER_API_KEY` |
 | **Requesty** _(700+ modèles, une seule clé)_ | `requesty/openai/gpt-4o-mini` · `requesty/anthropic/claude-sonnet-4-6` · `requesty/claude-sonnet-4-6` | variable | `REQUESTY_API_KEY` |
+| **Runcrate** | `runcrate/deepseek-ai/DeepSeek-V4.1-Flash` · `runcrate/zai-org/GLM-5.3` · `runcrate/moonshotai/Kimi-K2.6` | variable | `RUNCRATE_API_KEY` |
 | **AWS Bedrock / Azure / Vertex** _(via litellm)_ | `litellm/<provider>/<model>` | variable | spécifique au fournisseur |
 
 > **Passerelle `openrouter/` :** une seule clé pour plus de 400 modèles, tous fournisseurs confondus. L'ID du modèle conserve le chemin upstream `<vendor>/<model>` d'OpenRouter, l'appel porte donc un double préfixe : `openrouter/deepseek/deepseek-v4-flash`. Pour imposer le fournisseur upstream (et la quantification) qui traite la requête, ajoutez `@<provider>[/<quantization>]` — `openrouter/deepseek/deepseek-v4-flash@gmicloud/fp8` — envoyé comme objet `provider` dans le corps de la requête plutôt que collé à l'ID du modèle. Voir [usage.md](../guides/usage.md#openrouter-400-models-one-key).

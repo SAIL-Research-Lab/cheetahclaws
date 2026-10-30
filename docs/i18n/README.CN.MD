@@ -213,6 +213,7 @@ Claude Code 是一款强大的、生产级的 AI 编码助手 —— 但它的�
 | **MiniMax** | `MiniMax-Text-01` · `MiniMax-VL-01` · `abab6.5s-chat` | 256k–1M | `MINIMAX_API_KEY` |
 | **OpenRouter** _(400+ 模型，一把 key)_ | `openrouter/deepseek/deepseek-v4-flash` · `openrouter/anthropic/claude-sonnet-4-6` · `openrouter/openai/gpt-5` | 视情况而定 | `OPENROUTER_API_KEY` |
 | **Requesty** _(700+ 模型，一把 key)_ | `requesty/openai/gpt-4o-mini` · `requesty/anthropic/claude-sonnet-4-6` · `requesty/claude-sonnet-4-6` | 视情况而定 | `REQUESTY_API_KEY` |
+| **Runcrate** | `runcrate/deepseek-ai/DeepSeek-V4.1-Flash` · `runcrate/zai-org/GLM-5.3` · `runcrate/moonshotai/Kimi-K2.6` | 视情况而定 | `RUNCRATE_API_KEY` |
 | **AWS Bedrock / Azure / Vertex** _(通过 litellm)_ | `litellm/<provider>/<model>` | 视情况而定 | 特定于提供商 |
 
 > **`openrouter/` 网关：** 一把 key 覆盖跨厂商的 400+ 模型。模型 ID 保留 OpenRouter 上游的 `<vendor>/<model>` 路径，因此调用是双层前缀的：`openrouter/deepseek/deepseek-v4-flash`。若要指定由哪个上游提供商（及量化精度）来服务该请求，在模型后追加 `@<provider>[/<quantization>]` —— `openrouter/deepseek/deepseek-v4-flash@gmicloud/fp8` —— 它会作为 OpenRouter 的 `provider` 请求体对象发送，而不是拼进模型 ID。参见 [usage.md](../guides/usage.md#openrouter-400-models-one-key)。
