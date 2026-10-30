@@ -444,7 +444,8 @@ def execute_tool(
 
     # Cache hit for read-only tools (same name + same params + same session).
     use_cache = tool.read_only
-    mutates_files = name in ("Write", "Edit", "Bash", "NotebookEdit")
+    mutates_files = name in ("Write", "Edit", "MultiEdit", "ApplyPatch",
+                             "Bash", "NotebookEdit")
     if use_cache:
         sid = (config or {}).get("_session_id", "") or ""
         key = _cache_key(name, params, sid, config)

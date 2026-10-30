@@ -470,6 +470,15 @@ def run(
         state.total_output_tokens += assistant_turn.out_tokens
         state.total_cache_read_tokens  += getattr(assistant_turn, 'cache_read_tokens', 0)
         state.total_cache_write_tokens += getattr(assistant_turn, 'cache_write_tokens', 0)
+        # Real prompt size from the provider beats the chars/token estimate
+        # for the next compaction decision.
+        try:
+            from cheetahclaws.compaction import record_usage as _record_usage
+            _record_usage(state, assistant_turn.in_tokens, assistant_turn.out_tokens,
+                          cache_read_tokens=getattr(assistant_turn, 'cache_read_tokens', 0),
+                          cache_write_tokens=getattr(assistant_turn, 'cache_write_tokens', 0))
+        except Exception:
+            pass
         _emit_d(config, depth, "assistant_message",
                 text=assistant_turn.text or "",
                 tool_calls=[{"id": tc.get("id", ""), "name": tc.get("name", "")}

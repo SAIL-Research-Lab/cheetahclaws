@@ -288,6 +288,7 @@ from cheetahclaws.commands.monitor_cmd import cmd_subscribe, cmd_subscriptions, 
 
 from cheetahclaws.commands.research_cmd import cmd_research, cmd_reports
 from cheetahclaws.commands.lab_cmd import cmd_lab
+from cheetahclaws.commands.trust_cmd import cmd_trust
 
 # ── Theme command ──────────────────────────────────────────────────────────
 from cheetahclaws.commands.theme_cmd import cmd_theme
@@ -479,6 +480,19 @@ def _ask_permission_event(ev, config: dict) -> bool:
     """
     sig = getattr(ev, "signature", "")
     fn = ask_permission_interactive   # resolved at call time: honours monkeypatching
+    # Show what an edit would actually change before asking (dry run — writes
+    # nothing). `permission_diff_preview: false` turns it off.
+    tname = getattr(ev, "tool_name", "")
+    if (tname in ("Edit", "MultiEdit", "Write", "ApplyPatch")
+            and config.get("permission_diff_preview", True)):
+        try:
+            from cheetahclaws.tools import preview_edit
+            from cheetahclaws.ui.render import render_diff
+            preview = preview_edit(tname, getattr(ev, "tool_input", None) or {}, config)
+            if preview and not preview.startswith("Error"):
+                render_diff(preview)
+        except Exception:
+            pass
     if sig:
         try:
             import inspect
@@ -576,6 +590,7 @@ COMMANDS = {
     "agents":      cmd_agents,
     "mcp":         cmd_mcp,
     "plugin":      cmd_plugin,
+    "trust":       cmd_trust,
     "tasks":       cmd_tasks,
     "task":        cmd_tasks,
     "proactive":   cmd_proactive,
@@ -746,6 +761,7 @@ _CMD_META: dict[str, tuple[str, list[str]]] = {
     "plugin":      ("Manage plugins",                     ["install", "uninstall", "enable",
                                                            "disable", "disable-all", "update",
                                                            "recommend", "info"]),
+    "trust":       ("Trust this project (load its .mcp.json / plugins)", ["list", "revoke"]),
     "tasks":       ("Manage tasks",                       ["create", "delete", "get", "clear",
                                                            "todo", "in-progress", "done", "blocked"]),
     "task":        ("Manage tasks (alias)",               ["create", "delete", "get", "clear",
@@ -1350,6 +1366,27 @@ def repl(config: dict, initial_prompt: str = None):
         maybe_setup_vscode_terminal_title(config)
     except Exception:
         pass
+
+    # Workspace trust: a project's .mcp.json servers and plugins run code with
+    # the user's privileges, so they stay off until the user says yes — asked
+    # once here (interactive sessions only), or later with /trust.
+    if not initial_prompt and sys.stdin.isatty():
+        try:
+            from cheetahclaws import trust as _trust
+            from cheetahclaws.commands.trust_cmd import _show_pending
+            _pending = _trust.pending_untrusted()
+            if _pending:
+                warn("This project wants to run code on startup:")
+                _show_pending(_pending)
+                _ans = input("  Trust this folder and start them? [y/N] ").strip().lower()
+                if _ans in ("y", "yes"):
+                    cmd_trust("", state, config)
+                else:
+                    info("Not started. Run /trust any time to allow them.")
+        except (EOFError, KeyboardInterrupt):
+            print()
+        except Exception:
+            pass
 
     # Initialize proactive polling state via RuntimeContext (defaults already set)
     session_ctx.last_interaction_time = time.time()
@@ -2232,6 +2269,11 @@ def main():
     if len(sys.argv) >= 2 and sys.argv[1] == "spike-daemon":
         from cheetahclaws.daemon.cli import main as _legacy_main
         sys.exit(_legacy_main(sys.argv[2:]))
+
+    # `cheetahclaws trust [list|revoke [dir]|dir]` — workspace trust from the shell.
+    if len(sys.argv) >= 2 and sys.argv[1] == "trust":
+        from cheetahclaws.trust import main as _trust_main
+        sys.exit(_trust_main(sys.argv[2:]))
 
     # `cheetahclaws replay <id>` — read-only timeline of a recorded session.
     if len(sys.argv) >= 2 and sys.argv[1] == "replay":

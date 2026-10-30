@@ -920,6 +920,8 @@ _SUMMARY_VERBS = {
     "Read":      ("Read", "file", "files"),
     "Write":     ("wrote", "file", "files"),
     "Edit":      ("edited", "file", "files"),
+    "MultiEdit": ("edited", "file", "files"),
+    "ApplyPatch": ("applied", "patch", "patches"),
     "Bash":      ("ran", "shell command", "shell commands"),
     "Glob":      ("ran", "file search", "file searches"),
     "Grep":      ("ran", "search", "searches"),
@@ -988,6 +990,12 @@ def _tool_desc(name: str, inputs: dict) -> str:
     if name == "Read":   return f"Read({inputs.get('file_path','')})"
     if name == "Write":  return f"Write({inputs.get('file_path','')})"
     if name == "Edit":   return f"Edit({inputs.get('file_path','')})"
+    if name == "MultiEdit":
+        return f"MultiEdit({inputs.get('file_path','')}, {len(inputs.get('edits') or [])} edits)"
+    if name == "ApplyPatch":
+        _files = [l.split(":", 1)[1].strip() for l in str(inputs.get('patch') or inputs.get('input') or '').splitlines()
+                  if l.startswith(("*** Update File:", "*** Add File:", "*** Delete File:"))]
+        return f"ApplyPatch({', '.join(_files[:3])}{' …' if len(_files) > 3 else ''})"
     if name == "Bash":   return f"Bash({inputs.get('command','')[:80]})"
     if name == "Glob":   return f"Glob({inputs.get('pattern','')})"
     if name == "Grep":   return f"Grep({inputs.get('pattern','')})"
@@ -1050,7 +1058,7 @@ def print_tool_end(name: str, result: str, verbose: bool):
     summary = f"→ {lines} lines ({size} chars)"
     if not result.startswith("Error") and not result.startswith("Denied"):
         print(clr(f"  ✓ {summary}", "dim", "green"), flush=True)
-        if name in ("Edit", "Write") and _has_diff(result):
+        if name in ("Edit", "Write", "MultiEdit", "ApplyPatch") and _has_diff(result):
             parts = result.split("\n\n", 1)
             if len(parts) == 2:
                 print(clr(f"  {parts[0]}", "dim"))

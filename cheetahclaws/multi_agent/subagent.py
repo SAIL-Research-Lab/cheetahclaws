@@ -314,7 +314,9 @@ class SubAgentPermissionPolicy:
     def _deny(self, req, reason: str) -> bool:
         req.granted = False
         try:
-            req.reason = reason   # surfaced by loops that support it
+            req.reason = reason
+            req.deny_reason = reason   # the loop returns it as the tool result
+            req.decided_by = "subagent_policy"
         except Exception:
             pass
         self.denials.append(f"{getattr(req, 'description', '')} — {reason}")

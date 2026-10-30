@@ -91,6 +91,13 @@ def load_mcp_configs(include_untrusted: bool = False) -> Dict[str, MCPServerConf
     }
 
 
+def _write_user_config(data: dict) -> None:
+    # Server entries often carry tokens (env / headers): write 0600, atomically.
+    from cheetahclaws.config import _write_private_json
+    USER_MCP_CONFIG.parent.mkdir(parents=True, exist_ok=True)
+    _write_private_json(USER_MCP_CONFIG, data)
+
+
 def save_user_mcp_config(servers: Dict[str, dict]) -> None:
     """Write (or update) the user-level MCP config file."""
     USER_MCP_CONFIG.parent.mkdir(parents=True, exist_ok=True)
@@ -101,7 +108,7 @@ def save_user_mcp_config(servers: Dict[str, dict]) -> None:
         except Exception:
             pass
     existing["mcpServers"] = servers
-    USER_MCP_CONFIG.write_text(json.dumps(existing, indent=2), encoding="utf-8")
+    _write_user_config(existing)
 
 
 def add_server_to_user_config(name: str, raw: dict) -> None:
@@ -116,7 +123,7 @@ def add_server_to_user_config(name: str, raw: dict) -> None:
     mcp_servers[name] = raw
     existing["mcpServers"] = mcp_servers
     USER_MCP_CONFIG.parent.mkdir(parents=True, exist_ok=True)
-    USER_MCP_CONFIG.write_text(json.dumps(existing, indent=2), encoding="utf-8")
+    _write_user_config(existing)
 
 
 def remove_server_from_user_config(name: str) -> bool:
@@ -130,7 +137,7 @@ def remove_server_from_user_config(name: str) -> bool:
             return False
         del mcp_servers[name]
         existing["mcpServers"] = mcp_servers
-        USER_MCP_CONFIG.write_text(json.dumps(existing, indent=2), encoding="utf-8")
+        _write_user_config(existing)
         return True
     except Exception:
         return False
