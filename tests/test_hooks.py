@@ -20,7 +20,6 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(hooks, "_user_settings_path", lambda: user)
     monkeypatch.setenv("CHEETAHCLAWS_PROJECT_DIR", str(proj))
     monkeypatch.delenv("CHEETAHCLAWS_DISABLE_HOOKS", raising=False)
-    monkeypatch.delitem(sys.modules, "cheetahclaws.trust", raising=False)
     hooks.clear_registered()
     yield types.SimpleNamespace(user=user, proj=proj, tmp=tmp_path)
     hooks.clear_registered()
@@ -110,12 +109,11 @@ def test_continue_false_halts(env):
 def test_project_hooks_require_trust(env, monkeypatch):
     cmd = _script(env.tmp, "h.py", "import sys; sys.exit(2)")
     _settings(env.proj / ".cheetahclaws" / "settings.json", "PreToolUse", cmd)
-    # trust module absent → untrusted → ignored
+    # project never trusted (conftest isolates trust.json) → ignored
     assert not hooks.has_hooks("PreToolUse")
 
-    fake = types.ModuleType("cheetahclaws.trust")
-    fake.is_trusted = lambda path: str(path) == str(env.proj)
-    monkeypatch.setitem(sys.modules, "cheetahclaws.trust", fake)
+    from cheetahclaws import trust as _trust
+    monkeypatch.setattr(_trust, "is_trusted", lambda path: str(path) == str(env.proj))
     hooks._cache["key"] = None
     assert hooks.has_hooks("PreToolUse")
     assert hooks.run_hooks("PreToolUse", {}, match_value="Bash").decision == "deny"

@@ -173,7 +173,7 @@ TOOL_SCHEMAS = [
             "type": "object",
             "properties": {
                 "command": {"type": "string"},
-                "timeout": {"type": "integer", "description": "Seconds before timeout (default 30). Use 120-300 for package installs (npm, pip, npx), builds, and long-running commands."},
+                "timeout": {"type": "integer", "description": "Seconds before timeout (default 120). Use 300+ for package installs (npm, pip, npx), builds, and long-running commands."},
             },
             "required": ["command"],
         },
@@ -692,10 +692,11 @@ def _register_builtins() -> None:
                 "{\"command\": \"ls -la\"}."
                 if not (isinstance(p.get("command"), str) and p["command"].strip())
                 else _bash(
-                    p["command"], p.get("timeout", 30),
+                    p["command"], p.get("timeout", c.get("bash_default_timeout", 120)),
                     c.get("_worktree_cwd"),
                     c.get("shell_policy", "allow"),
                     c.get("_session_id", "default"),
+                    config=c,
                 )
             ),
             read_only=False, concurrent_safe=False,
@@ -736,6 +737,7 @@ def _register_builtins() -> None:
                     p["url"], p.get("prompt"),
                     max_bytes=c.get("web_fetch_max_bytes", 512 * 1024),
                     max_seconds=c.get("web_fetch_max_seconds", 30),
+                    config=c,
                 )
                 if isinstance(p.get("url"), str) and p["url"].strip()
                 else "Error: WebFetch requires a non-empty 'url' "

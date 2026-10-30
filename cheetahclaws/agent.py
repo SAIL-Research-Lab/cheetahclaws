@@ -1331,6 +1331,13 @@ def _permission_signature(tc: dict) -> str:
         if needed:
             return "Bash:" + " + ".join(s[len("Bash:"):] for s in needed)
         return first or "Bash"
+    if name == "ApplyPatch":
+        # One grant per exact set of files, so approving a patch to a.py
+        # never approves a later patch that touches (or deletes) b.py.
+        # Empty (no "always allow") when the patch doesn't parse.
+        from cheetahclaws.tools.patch import patch_paths
+        paths = sorted(set(patch_paths(inp.get("patch") or inp.get("input") or "")))
+        return f"ApplyPatch:{'|'.join(paths)}" if paths else ""
     path = inp.get("file_path") or inp.get("notebook_path")
     if path:
         return f"{name}:{os.path.abspath(path)}"
@@ -1389,14 +1396,14 @@ def _check_permission(tc: dict, config: dict) -> bool:
 
     if perm_mode == "plan":
         # Allow writes ONLY to the plan file
-        if name in ("Write", "Edit"):
+        if name in ("Write", "Edit", "MultiEdit"):
             plan_file = runtime.get_ctx(config).plan_file or ""
             target = tc["input"].get("file_path", "")
             if plan_file and target and \
                os.path.normpath(target) == os.path.normpath(plan_file):
                 return True
             return False
-        if name == "NotebookEdit":
+        if name in ("NotebookEdit", "ApplyPatch"):
             return False
         if name == "Bash":
             from cheetahclaws.tools import _is_safe_bash
@@ -1420,7 +1427,8 @@ def _check_permission(tc: dict, config: dict) -> bool:
     # Bash and everything else still follow the auto rules below, so a
     # non-allow-listed shell command is still prompted (and the hard denylist
     # still applies at execution time).
-    if perm_mode == "accept-edits" and name in ("Write", "Edit", "NotebookEdit"):
+    if perm_mode == "accept-edits" and name in ("Write", "Edit", "MultiEdit",
+                                                "ApplyPatch", "NotebookEdit"):
         return True
 
     # "auto" mode (and accept-edits fall-through): prompt only for actions
@@ -1442,6 +1450,11 @@ def _permission_desc(tc: dict) -> str:
     if name == "Bash":   return f"Run: {inp.get('command', '')}"
     if name == "Write":  return f"Write to: {inp.get('file_path', '')}"
     if name == "Edit":   return f"Edit: {inp.get('file_path', '')}"
+    if name == "MultiEdit":
+        return f"MultiEdit ({len(inp.get('edits') or [])} edits): {inp.get('file_path', '')}"
+    if name == "ApplyPatch":
+        from cheetahclaws.tools.patch import describe_patch
+        return f"ApplyPatch: {describe_patch(inp.get('patch') or inp.get('input') or '')}"
     return f"{name}({list(inp.values())[:1]})"
 
 
