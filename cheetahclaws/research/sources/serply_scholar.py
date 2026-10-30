@@ -23,6 +23,17 @@ def _year(byline: str) -> str:
     return m.group(1) if m else ""
 
 
+# The response shape is not under our control. A field of an unexpected type
+# must not raise TypeError: the aggregator reads that as "source predates the
+# time_range kwarg" and repeats the call, spending a second API credit.
+def _obj(v) -> dict:
+    return v if isinstance(v, dict) else {}
+
+
+def _text(v) -> str:
+    return v if isinstance(v, str) else ""
+
+
 def search(query: str, limit: int = 10, config: dict | None = None,
            time_range=None) -> list[Result]:
     key = (
@@ -44,15 +55,20 @@ def search(query: str, limit: int = 10, config: dict | None = None,
     data = get(_ENDPOINT, params=params, headers=headers)
 
     out: list[Result] = []
-    for item in data.get("articles") or []:
-        title = (item.get("title") or "").strip()
-        url = (item.get("link") or "").strip()
+    articles = _obj(data).get("articles")
+    for item in articles if isinstance(articles, list) else []:
+        item = _obj(item)
+        title = _text(item.get("title")).strip()
+        url = _text(item.get("link")).strip()
         if not title or not url.startswith(("http://", "https://")):
             continue
-        author = item.get("author") or {}
-        byline = (author.get("names") or item.get("description") or "")
+        author = _obj(item.get("author"))
+        byline = _text(author.get("names")) or _text(item.get("description"))
         byline = byline.replace("\xa0", " ").strip()
-        names = [a.get("name") for a in author.get("authors") or [] if a.get("name")]
+        authors = author.get("authors")
+        names = [_text(_obj(a).get("name")).strip()
+                 for a in (authors if isinstance(authors, list) else [])]
+        names = [n for n in names if n]
         if names:
             author_str = ", ".join(names[:3])
             if len(names) > 3:
@@ -61,9 +77,11 @@ def search(query: str, limit: int = 10, config: dict | None = None,
             author_str = byline.split(" - ")[0].rstrip("\u2026 ")
         year = _year(byline)
 
-        extras = item.get("extras") or {}
-        cited = extras.get("citations") or {}
-        digits = re.sub(r"\D", "", cited.get("count") or "")
+        cited = _obj(_obj(item.get("extras")).get("citations"))
+        count = cited.get("count")
+        # "Cited by 31921" normally; accept a bare number too
+        digits = (re.sub(r"\D", "", str(count))
+                  if isinstance(count, (str, int)) else "")
         num_citations = int(digits) if digits else 0
 
         out.append(Result(
@@ -77,8 +95,8 @@ def search(query: str, limit: int = 10, config: dict | None = None,
             engagement_label=f"{num_citations:,} citations (Scholar)",
             domain="academic",
             extra={
-                "pdf_url": (item.get("doc") or {}).get("link") or "",
-                "cites_url": cited.get("link") or "",
+                "pdf_url": _text(_obj(item.get("doc")).get("link")),
+                "cites_url": _text(cited.get("link")),
             },
         ))
         if len(out) >= limit:

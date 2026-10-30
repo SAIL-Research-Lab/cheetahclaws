@@ -75,7 +75,7 @@ No configuration required — 13 of 20 sources work out of the box.
 | **微博 Weibo** | social, news | `WEIBO_COOKIE` | Paste `SUB; SUBP` from m.weibo.cn after logging in; the mobile API returns `ok: -100` anonymously |
 | **小红书 Xiaohongshu** | social, news | `XHS_COOKIE` (+ sometimes `XHS_X_S`) | Xiaohongshu uses signed requests — cookie must come from an active browser session; anti-bot is aggressive and cookies may expire hourly. Alternative: use `--sources tavily` with `<query> site:xiaohongshu.com` |
 | **Google Scholar** | academic | `pip install scholarly` | No official API; `scholarly` scrapes HTML — brittle (~5-20s per query, CAPTCHA-prone). Set `SKIP_GOOGLE_SCHOLAR=1` to force-disable even when installed. |
-| **Serply Scholar** | academic | `SERPLY_API_KEY` | Google Scholar through the Serply API: Scholar's citation counts without scraping, ~1-2s per query. Free trial credits at serply.io |
+| **Serply Scholar** | academic | `SERPLY_API_KEY` | Google Scholar through the Serply API: Scholar's citation counts without scraping, ~1-2s per query. Each query (and each sub-query after expansion) uses one Serply request |
 
 You can also optionally set:
 
