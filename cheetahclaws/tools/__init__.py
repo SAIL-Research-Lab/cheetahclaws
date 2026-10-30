@@ -2,7 +2,10 @@
 
 Implementations live in focused sub-modules:
   tools.security     _check_path_allowed, _is_safe_bash
-  tools.fs           Read / Write / Edit / Glob + diff helpers
+  tools.fs           Read / Write / Edit / MultiEdit / Glob + diff helpers,
+                     preview_edit (diff preview for approval prompts)
+  tools.patch        ApplyPatch (Codex-style multi-file patches, atomic)
+  tools.file_state   encoding detection, atomic writes, read-before-edit tracker
   tools.shell        Bash / Grep
   tools.web          WebFetch / WebSearch
   tools.notebook     NotebookEdit
@@ -22,9 +25,12 @@ from typing import Callable, Optional
 from cheetahclaws.tools.security import _check_path_allowed, _is_safe_bash  # noqa: F401
 
 from cheetahclaws.tools.fs import (  # noqa: F401
-    _read, _write, _edit, _glob,
-    generate_unified_diff, maybe_truncate_diff,
+    _read, _write, _edit, _multi_edit, _glob,
+    generate_unified_diff, maybe_truncate_diff, preview_edit,
+    record_file_state,
 )
+
+from cheetahclaws.tools.patch import apply_patch as _apply_patch, patch_paths, describe_patch  # noqa: F401
 
 from cheetahclaws.tools.shell import _bash, _grep, _kill_proc_tree, _has_rg  # noqa: F401
 
@@ -70,7 +76,10 @@ TOOL_SCHEMAS = [
     },
     {
         "name": "Write",
-        "description": "Write content to a file, creating parent directories as needed.",
+        "description": (
+            "Write content to a file, creating parent directories as needed. "
+            "To overwrite an existing file you must Read it first in this session."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
@@ -84,7 +93,9 @@ TOOL_SCHEMAS = [
         "name": "Edit",
         "description": (
             "Replace exact text in a file. old_string must match exactly (including whitespace). "
-            "If old_string appears multiple times, use replace_all=true or add more context."
+            "If old_string appears multiple times, use replace_all=true or add more context. "
+            "You must Read the file first in this session; the edit is refused if the "
+            "file changed on disk since. Line endings and encoding are preserved."
         ),
         "input_schema": {
             "type": "object",
@@ -95,6 +106,64 @@ TOOL_SCHEMAS = [
                 "replace_all": {"type": "boolean", "description": "Replace all occurrences"},
             },
             "required": ["file_path", "old_string", "new_string"],
+        },
+    },
+    {
+        "name": "MultiEdit",
+        "description": (
+            "Make several exact-text replacements in ONE file in a single call. "
+            "Edits apply in order, each to the result of the previous one, and are "
+            "all-or-nothing: if any edit fails, the file is left untouched. Same "
+            "matching rules as Edit. Prefer this over repeated Edit calls on one file. "
+            "You must Read the file first in this session."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "file_path": {"type": "string", "description": "Absolute file path"},
+                "edits": {
+                    "type": "array",
+                    "minItems": 1,
+                    "description": "Replacements to apply in sequence",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "old_string":  {"type": "string", "description": "Exact text to replace"},
+                            "new_string":  {"type": "string", "description": "Replacement text"},
+                            "replace_all": {"type": "boolean", "description": "Replace all occurrences (default false)"},
+                        },
+                        "required": ["old_string", "new_string"],
+                    },
+                },
+            },
+            "required": ["file_path", "edits"],
+        },
+    },
+    {
+        "name": "ApplyPatch",
+        "description": (
+            "Apply a multi-file patch atomically (all files change or none do). Format:\n"
+            "*** Begin Patch\n"
+            "*** Update File: path/to/file.py\n"
+            "@@ def optional_anchor_line():\n"
+            " context line\n"
+            "-removed line\n"
+            "+added line\n"
+            "*** Add File: path/new.py\n"
+            "+every line prefixed with +\n"
+            "*** Delete File: path/old.py\n"
+            "*** End Patch\n"
+            "Optional '*** Move to: new/path' directly after an Update File header renames "
+            "the file. Paths are relative to the working directory (absolute also accepted). "
+            "Give ~3 lines of context around each change; context must identify a unique "
+            "location. Files being updated must have been Read in this session."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "patch": {"type": "string", "description": "Full patch text from '*** Begin Patch' to '*** End Patch'"},
+            },
+            "required": ["patch"],
         },
     },
     {
@@ -478,6 +547,14 @@ def execute_tool(
     elif name == "Edit":
         if not _check(f"Edit {inputs.get('file_path', '<missing path>')}"):
             return "Denied: user rejected edit operation"
+    elif name == "MultiEdit":
+        if not _check(f"MultiEdit {inputs.get('file_path', '<missing path>')}"):
+            return "Denied: user rejected edit operation"
+    elif name == "ApplyPatch":
+        # Covers Add / Update / Move *and* Delete File: deletes go through the
+        # same approval as every other write.
+        if not _check(f"ApplyPatch: {describe_patch(inputs.get('patch') or '', cfg)}"):
+            return "Denied: user rejected patch"
     elif name == "Bash":
         cmd = inputs.get("command", "") or ""
         if permission_mode != "accept-all" and not _is_safe_bash(cmd, cfg):
@@ -488,6 +565,51 @@ def execute_tool(
             return "Denied: user rejected notebook edit operation"
 
     return _registry_execute(name, inputs, cfg)
+
+
+# ── MultiEdit / ApplyPatch wrappers ──────────────────────────────────────
+
+def _plan_mode_blocks(paths: list, config: dict) -> Optional[str]:
+    """Defense in depth: in plan mode only the plan file may be modified.
+
+    The agent-level permission gate knows Write/Edit by name; these newer
+    tools enforce the rule themselves so plan mode can never be bypassed.
+    """
+    if config.get("permission_mode") != "plan":
+        return None
+    import os as _os
+    try:
+        from cheetahclaws import runtime as _rt
+        plan_file = _rt.get_ctx(config).plan_file or ""
+    except Exception:
+        plan_file = ""
+    for path in paths:
+        if not plan_file or _os.path.realpath(path) != _os.path.realpath(plan_file):
+            return ("Error: plan mode is active — only the plan file may be "
+                    "modified. Call ExitPlanMode before editing other files.")
+    return None
+
+
+def _multi_edit_tool(p: dict, c: dict) -> str:
+    fp = p.get("file_path")
+    if not fp:
+        return "Error: missing required parameter 'file_path'"
+    if "edits" not in p:
+        return "Error: missing required parameter 'edits'"
+    return (_check_path_allowed(fp, c) or _plan_mode_blocks([fp], c)
+            or _multi_edit(fp, p.get("edits"), config=c))
+
+
+def _apply_patch_tool(p: dict, c: dict) -> str:
+    patch = p.get("patch") or p.get("input")   # "input" = Codex's field name
+    if not isinstance(patch, str) or not patch.strip():
+        return "Error: missing required parameter 'patch'"
+    paths = patch_paths(patch, c)
+    for path in paths:
+        denied = _check_path_allowed(path, c)
+        if denied:
+            return denied
+    return _plan_mode_blocks(paths, c) or _apply_patch(patch, c)
 
 
 # ── Register built-in tools with the plugin registry ─────────────────────
@@ -512,6 +634,9 @@ def _register_builtins() -> None:
             scan_max_bytes=c.get("tool_read_scan_max_bytes", 2 * 1024 * 1024),
             max_output_chars=c.get("tool_read_max_output_chars", 50_000),
         )
+        if result and not result.startswith("Error"):
+            # Read-before-edit: remember what this session has seen.
+            record_file_state(p["file_path"], c)
         # Skip redirect for already-small results (errors, empty, etc.)
         if not result or len(result) < 8000:
             return result
@@ -531,7 +656,7 @@ def _register_builtins() -> None:
             schema=_schemas["Write"],
             func=lambda p, c: (
                 "Error: missing required parameter 'file_path'" if not p.get("file_path")
-                else _check_path_allowed(p["file_path"], c) or _write(**p)
+                else _check_path_allowed(p["file_path"], c) or _write(**p, config=c)
             ),
             read_only=False, concurrent_safe=False,
         ),
@@ -540,9 +665,23 @@ def _register_builtins() -> None:
             schema=_schemas["Edit"],
             func=lambda p, c: (
                 "Error: missing required parameter 'file_path'" if not p.get("file_path")
-                else _check_path_allowed(p["file_path"], c) or _edit(**p)
+                else _check_path_allowed(p["file_path"], c) or _edit(**p, config=c)
             ),
             read_only=False, concurrent_safe=False,
+        ),
+        ToolDef(
+            name="MultiEdit",
+            schema=_schemas["MultiEdit"],
+            func=_multi_edit_tool,
+            read_only=False, concurrent_safe=False,
+            profiles=frozenset({"standard"}),
+        ),
+        ToolDef(
+            name="ApplyPatch",
+            schema=_schemas["ApplyPatch"],
+            func=_apply_patch_tool,
+            read_only=False, concurrent_safe=False,
+            profiles=frozenset({"standard"}),
         ),
         ToolDef(
             name="Bash",
@@ -738,6 +877,8 @@ def _enter_plan_mode(params: dict, config: dict) -> str:
     if not plan_path.exists() or plan_path.stat().st_size == 0:
         header = f"# Plan: {task_desc}\n\n" if task_desc else "# Plan\n\n"
         plan_path.write_text(header, encoding="utf-8")
+    # The agent is told the plan file's path; let it edit it without a Read.
+    record_file_state(plan_path, config)
 
     from cheetahclaws import runtime
     sctx = runtime.get_ctx(config)

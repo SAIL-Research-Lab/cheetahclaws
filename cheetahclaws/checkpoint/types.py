@@ -48,9 +48,15 @@ class Snapshot:
     user_prompt_preview: str        # first 80 chars of the triggering prompt
     token_snapshot: dict[str, int]  # {"input": N, "output": N}
     file_backups: dict[str, FileBackup] = field(default_factory=dict)
+    # Files first modified in the interval ending at this snapshot, with
+    # their state *before* that first modification:
+    #   {path: {"backup_filename": str | None, "existed": bool}}
+    # Lets a rewind to an earlier snapshot restore (or delete) files that
+    # the earlier snapshot never recorded.
+    pre_edit_backups: dict[str, dict] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "id": self.id,
             "session_id": self.session_id,
             "created_at": self.created_at,
@@ -62,6 +68,9 @@ class Snapshot:
                 path: fb.to_dict() for path, fb in self.file_backups.items()
             },
         }
+        if self.pre_edit_backups:
+            d["pre_edit_backups"] = {p: dict(v) for p, v in self.pre_edit_backups.items()}
+        return d
 
     @classmethod
     def from_dict(cls, data: dict) -> Snapshot:
@@ -77,4 +86,8 @@ class Snapshot:
             user_prompt_preview=data.get("user_prompt_preview", ""),
             token_snapshot=data.get("token_snapshot", {}),
             file_backups=backups,
+            pre_edit_backups={
+                p: dict(v) for p, v in (data.get("pre_edit_backups") or {}).items()
+                if isinstance(v, dict)
+            },
         )
