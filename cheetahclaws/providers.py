@@ -194,7 +194,7 @@ PROVIDERS: dict[str, dict] = {
         ],
     },
     # CloudGPU: DeepSeek, Kimi, GLM, MiniMax and Qwen models behind one
-    # OpenAI-compatible endpoint. Get a key at https://cloudgpu.app/dashboard/api-keys;
+    # OpenAI-compatible endpoint. Get a key at https://cloudgpu.app/api/console;
     # the current model list is at GET https://cloudgpu.app/v1/models.
     # Model IDs are single-segment, so this is a plain explicit prefix:
     #   /model cloudgpu/deepseek-v4.1-flash
