@@ -219,7 +219,7 @@ context window is the gateway default of 128k (raise it with
 
 [CloudGPU](https://cloudgpu.app) serves DeepSeek, Kimi, GLM, MiniMax and Qwen
 models behind one OpenAI-compatible endpoint (`https://cloudgpu.app/v1`). Get
-a key at [cloudgpu.app/dashboard/api-keys](https://cloudgpu.app/dashboard/api-keys);
+a key at [cloudgpu.app/api/console](https://cloudgpu.app/api/console);
 the current model list is at `GET https://cloudgpu.app/v1/models` and pricing
 is on [cloudgpu.app/api](https://cloudgpu.app/api).
 
