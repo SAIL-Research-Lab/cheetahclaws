@@ -8,7 +8,7 @@ English | [中文](docs/i18n/README.CN.MD) | [한국어](docs/i18n/README.KO.MD)
   </a>
 
   
-<h2 align="center" style="font-size: 30px;"><strong><em>CheetahClaws</em></strong>: A Fast and Easy-to-Use Agent Harness Infrastructure for Long-Horizon, Multi-Model, and Tool-Using AI Systems</h2>
+<h2 align="center" style="font-size: 30px;"><strong><em>CheetahClaws</em></strong>: Scaling the Harness in Agentic AI</h2>
 <p align="center">
     <a href="https://cheetahclaws.github.io/">Website</a>
     ·
