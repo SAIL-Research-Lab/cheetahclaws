@@ -170,7 +170,7 @@ Claude Code is a powerful, production-grade AI coding assistant — but its sour
 
 | Feature | Details |
 |---|---|
-| Multi-provider | Anthropic · OpenAI · Gemini · Kimi · Qwen · Zhipu · DeepSeek · MiniMax · OpenRouter · Requesty · Runcrate · Ollama · LM Studio · Custom endpoint |
+| Multi-provider | Anthropic · OpenAI · Gemini · Kimi · Qwen · Zhipu · DeepSeek · MiniMax · OpenRouter · Requesty · Runcrate · llm.buzz · Ollama · LM Studio · Custom endpoint |
 | Agent loop | Streaming API + automatic tool-use loop; the whole loop is in `agent.py` |
 | 28 built-in tools | Read · Write · Edit · Bash · Glob · Grep · WebFetch · WebSearch · NotebookEdit · GetDiagnostics · Memory* · Agent/SendMessage · Skill · AskUserQuestion · Task* · SleepTimer · EnterPlanMode/ExitPlanMode · *(MCP + plugin tools auto-added)* |
 | Tool profiles | `tool_profile` trims the tool surface sent each turn to save prompt tokens: `full` (default, everything) · `standard` (compact coding) · `research` (web + documents) · `orchestration` (agents + tasks). Set with `/config tool_profile=standard`. [Guide](docs/guides/usage.md#tool-profiles-tool_profile) |
