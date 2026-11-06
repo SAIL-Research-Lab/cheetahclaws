@@ -559,12 +559,14 @@ If you find the repository useful, please cite the study
   year={2026}
 }
 
+<!-- 
 @article{cheetahclaws2026,
   title={CheetahClaws: Agent Harness Infrastructure for Long-Horizon, Multi-Model, and Tool-Using AI Systems},
   author={CheetahClaws Team},
   journal={github},
   year={2026}
 }
+--> 
 ```
 
 
