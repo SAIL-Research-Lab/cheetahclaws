@@ -323,6 +323,7 @@ based on the model string:
 "openrouter/deepseek/deepseek-v4-flash" → openrouter  (400+ models, one key)
 "requesty/openai/gpt-4o-mini"           → requesty    (700+ models, one key)
 "runcrate/zai-org/GLM-5.3"              → runcrate    (open models, one key)
+"cloudgpu/deepseek-v4.1-flash"          → cloudgpu    (explicit prefix, single-segment ID)
 ```
 
 `stream(model, system, messages, tool_schemas, config) -> Generator`
