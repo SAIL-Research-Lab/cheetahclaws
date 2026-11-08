@@ -330,7 +330,7 @@ is the one entry point agent.py uses.  Internally it dispatches to
 `stream_anthropic()` (native SDK) or `stream_openai_compat()` (used by
 every OpenAI-compatible provider).
 
-**Gateway model IDs are multi-level.** OpenRouter, Requesty, Runcrate, NIM and LiteLLM
+**Gateway model IDs are multi-level.** OpenRouter, Requesty, Runcrate, llm.buzz, NIM and LiteLLM
 address models by an upstream `<vendor>/<model>` path, so only the first
 segment is the provider and `bare_model()` deliberately strips just that
 one.  Two consequences the rest of the file relies on:
