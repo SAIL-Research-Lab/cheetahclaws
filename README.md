@@ -17,7 +17,7 @@ English | [中文](docs/i18n/README.CN.MD) | [한국어](docs/i18n/README.KO.MD)
     <a href="https://github.com/SAIL-Research-Lab/cheetahclaws/issues">Issue</a>
     ·
     <a href="https://pypi.org/project/cheetahclaws/">
-      <img src="https://img.shields.io/badge/downloads-16.6K-blue" alt="Downloads 16.6K" align="absmiddle">
+      <img src="https://img.shields.io/badge/downloads-16.6K-blue" alt="Downloads 25K" align="absmiddle">
     </a>
   </p>
 </div>
