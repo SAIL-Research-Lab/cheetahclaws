@@ -10,15 +10,15 @@ English | [中文](docs/i18n/README.CN.MD) | [한국어](docs/i18n/README.KO.MD)
   
 <h2 align="center" style="font-size: 30px;"><strong><em>CheetahClaws</em></strong>: Scaling the Harness in Agentic AI</h2>
 <p align="center">
-    <a href="https://cheetahclaws.github.io/">Website</a>
-    ·
-    <a href="https://arxiv.org/pdf/2605.26112">Scaling the Harness</a>
-    ·
-    <a href="https://github.com/SAIL-Research-Lab/cheetahclaws/issues">Issue</a>
-    ·
-    <a href="https://pypi.org/project/cheetahclaws/">
-      <img src="https://img.shields.io/badge/downloads-25K-blue" alt="Downloads 25K" align="absmiddle">
-    </a>
+ 
+<a href="https://cheetahclaws.github.io/">Website</a>
+·
+<a href="https://arxiv.org/pdf/2605.26112">Scaling the Harness</a>
+·
+<a href="https://github.com/SAIL-Research-Lab/cheetahclaws/issues">Issue</a>
+·
+[![Downloads: 25K](https://img.shields.io/badge/Downloads-25K-blue)](https://pypi.org/project/cheetahclaws/)
+
   </p>
 </div>
 
