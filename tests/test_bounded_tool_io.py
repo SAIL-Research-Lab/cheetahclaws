@@ -16,7 +16,19 @@ from cheetahclaws.tools.files import (
     _read_pdf,
 )
 from cheetahclaws.tools.fs import _read
+from cheetahclaws.tools import web as _web
 from cheetahclaws.tools.web import _webfetch, _websearch
+
+
+@pytest.fixture(autouse=True)
+def _public_dns(monkeypatch):
+    """The fake-transport tests fetch https://example.test, which has no DNS;
+    resolve it to a public address so WebFetch's SSRF guard lets it through."""
+    real = _web._resolve_host_ips
+    monkeypatch.setattr(
+        _web, "_resolve_host_ips",
+        lambda host: real(host) if host[:1].isdigit() else ["93.184.216.34"],
+    )
 
 
 def test_read_streams_requested_line_range(tmp_path):
@@ -298,6 +310,7 @@ def test_webfetch_cancels_a_slow_drip_at_the_global_deadline():
         result = _webfetch(
             f"http://127.0.0.1:{server.server_port}/slow-drip",
             max_seconds=1,
+            config={"webfetch_allow_private": True},
         )
         elapsed = time.monotonic() - started
     finally:

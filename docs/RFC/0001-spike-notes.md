@@ -1,8 +1,8 @@
 # Spike notes — daemon foundation reference scaffolding
 
 - **Status:** Spike (working code, draft PR)
-- **Tracking issue:** [#68](https://github.com/SafeRL-Lab/cheetahclaws/issues/68)
-- **Tracks RFC:** [`0001-daemon-design-note.md`](./0001-daemon-design-note.md) (PR [#74](https://github.com/SafeRL-Lab/cheetahclaws/pull/74))
+- **Tracking issue:** [#68](https://github.com/SAIL-Research-Lab/cheetahclaws/issues/68)
+- **Tracks RFC:** [`0001-daemon-design-note.md`](./0001-daemon-design-note.md) (PR [#74](https://github.com/SAIL-Research-Lab/cheetahclaws/pull/74))
 - **Branch:** `feature/daemon-spike`
 - **Last updated:** 2026-04-30
 

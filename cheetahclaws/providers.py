@@ -1034,8 +1034,102 @@ def tools_to_openai(tool_schemas: list) -> list:
 #   ]}
 #   {"role": "tool", "tool_call_id": "...", "name": "...", "content": "..."}
 
-def messages_to_anthropic(messages: list) -> list:
-    """Convert neutral messages → Anthropic API format."""
+# Key under which Anthropic thinking blocks ride on an assistant message.
+# The loop may store them on the message itself (``thinking_blocks``); until
+# then ``stream_anthropic`` also attaches them to the turn's first tool call
+# under ``_TC_THINKING_KEY`` because tool_calls are copied verbatim into the
+# neutral history (and survive session save/restore as plain JSON).
+_TC_THINKING_KEY = "anthropic_thinking"
+
+_IMAGE_MAGIC = (
+    ("iVBORw0KGgo", "image/png"),
+    ("/9j/", "image/jpeg"),
+    ("R0lGOD", "image/gif"),
+    ("UklGR", "image/webp"),
+)
+
+
+def _sniff_image_media_type(b64: str) -> str:
+    for prefix, media in _IMAGE_MAGIC:
+        if b64.startswith(prefix):
+            return media
+    return "image/png"
+
+
+def _image_to_anthropic(img) -> dict | None:
+    """Convert a neutral image (base64 str, data: URL, or dict) to an
+    Anthropic image content block.  Returns None for unusable entries."""
+    media_type = None
+    data = None
+    if isinstance(img, dict):
+        if img.get("type") == "image" and isinstance(img.get("source"), dict):
+            return img
+        data = img.get("data") or img.get("base64") or img.get("b64")
+        media_type = img.get("media_type") or img.get("mime_type")
+        if not data and isinstance(img.get("url"), str):
+            if img["url"].startswith("data:"):
+                img = img["url"]
+            else:
+                return {"type": "image",
+                        "source": {"type": "url", "url": img["url"]}}
+    if isinstance(img, str):
+        if img.startswith("data:") and ";base64," in img:
+            header, data = img.split(";base64,", 1)
+            media_type = header[len("data:"):] or None
+        else:
+            data = img
+    if not isinstance(data, str) or not data:
+        return None
+    return {
+        "type": "image",
+        "source": {
+            "type": "base64",
+            "media_type": media_type or _sniff_image_media_type(data),
+            "data": data,
+        },
+    }
+
+
+def _looks_like_tool_error(content) -> bool:
+    """Heuristic used only when a tool message carries no ``is_error``."""
+    if not isinstance(content, str):
+        return False
+    head = content.lstrip()[:24].lower()
+    return head.startswith("error") or head.startswith("denied")
+
+
+def _thinking_blocks_for(m: dict) -> list:
+    blocks = m.get("thinking_blocks")
+    if not blocks:
+        for tc in m.get("tool_calls") or []:
+            if isinstance(tc, dict) and tc.get(_TC_THINKING_KEY):
+                blocks = tc[_TC_THINKING_KEY]
+                break
+    out = []
+    for b in blocks or []:
+        if not isinstance(b, dict):
+            continue
+        if b.get("type") == "thinking" and b.get("signature"):
+            out.append({"type": "thinking",
+                        "thinking": b.get("thinking", ""),
+                        "signature": b["signature"]})
+        elif b.get("type") == "redacted_thinking" and b.get("data"):
+            out.append({"type": "redacted_thinking", "data": b["data"]})
+    return out
+
+
+def messages_to_anthropic(messages: list, include_thinking: bool = True) -> list:
+    """Convert neutral messages → Anthropic API format.
+
+    * Assistant turns replay captured thinking / redacted_thinking blocks
+      verbatim (with signatures) before text and tool_use — required by the
+      API when extended thinking is used together with tools.  Pass
+      ``include_thinking=False`` to omit them (e.g. thinking disabled).
+    * User ``images`` (base64 strings as stored by /image) become image
+      content blocks.
+    * Tool results carry ``is_error`` from the neutral message when present,
+      otherwise from a conservative "Error…/Denied…" prefix heuristic.
+    """
     result = []
     i = 0
     while i < len(messages):
@@ -1043,11 +1137,25 @@ def messages_to_anthropic(messages: list) -> list:
         role = m["role"]
 
         if role == "user":
-            result.append({"role": "user", "content": m["content"]})
+            content = m["content"]
+            images = [b for b in (_image_to_anthropic(x)
+                                  for x in (m.get("images") or [])) if b]
+            if images:
+                if isinstance(content, list):
+                    blocks = images + list(content)
+                else:
+                    blocks = list(images)
+                    if content:
+                        blocks.append({"type": "text", "text": content})
+                result.append({"role": "user", "content": blocks})
+            else:
+                result.append({"role": "user", "content": content})
             i += 1
 
         elif role == "assistant":
             blocks = []
+            if include_thinking:
+                blocks.extend(_thinking_blocks_for(m))
             text = m.get("content", "")
             if text:
                 blocks.append({"type": "text", "text": text})
@@ -1066,11 +1174,17 @@ def messages_to_anthropic(messages: list) -> list:
             tool_blocks = []
             while i < len(messages) and messages[i]["role"] == "tool":
                 t = messages[i]
-                tool_blocks.append({
+                block = {
                     "type":        "tool_result",
                     "tool_use_id": t["tool_call_id"],
                     "content":     t["content"],
-                })
+                }
+                is_error = t.get("is_error")
+                if is_error is None:
+                    is_error = _looks_like_tool_error(t["content"])
+                if is_error:
+                    block["is_error"] = True
+                tool_blocks.append(block)
                 i += 1
             result.append({"role": "user", "content": tool_blocks})
 
@@ -1173,7 +1287,7 @@ class AssistantTurn:
     """
     def __init__(self, text, tool_calls, in_tokens, out_tokens,
                  cache_read_tokens=0, cache_write_tokens=0,
-                 reasoning_content=""):
+                 reasoning_content="", thinking_blocks=None):
         self.text                 = text
         self.tool_calls           = tool_calls   # list of {id, name, input}
         self.in_tokens            = in_tokens
@@ -1181,6 +1295,9 @@ class AssistantTurn:
         self.cache_read_tokens    = cache_read_tokens
         self.cache_write_tokens = cache_write_tokens
         self.reasoning_content    = reasoning_content
+        # Anthropic extended thinking: [{type: thinking, thinking, signature}
+        # | {type: redacted_thinking, data}] to replay verbatim next request.
+        self.thinking_blocks      = list(thinking_blocks or [])
 
 
 # ── SDK client reuse ───────────────────────────────────────────────────────
@@ -1427,7 +1544,8 @@ def stream_anthropic(
         "model":      model,
         "max_tokens": _mt,
         "system":     system,
-        "messages":   messages_to_anthropic(messages),
+        "messages":   messages_to_anthropic(
+            messages, include_thinking=bool(config.get("thinking"))),
         "tools":      tool_schemas,
     }
     if config.get("thinking"):
@@ -1467,13 +1585,31 @@ def stream_anthropic(
                                 yield ThinkingChunk(delta.thinking)
 
                     final = stream.get_final_message()
+                    thinking_blocks = []
                     for block in final.content:
-                        if block.type == "tool_use":
+                        btype = getattr(block, "type", None)
+                        if btype == "tool_use":
                             tool_calls.append({
                                 "id":    block.id,
                                 "name":  block.name,
                                 "input": block.input,
                             })
+                        elif btype == "thinking":
+                            thinking_blocks.append({
+                                "type":      "thinking",
+                                "thinking":  getattr(block, "thinking", "") or "",
+                                "signature": getattr(block, "signature", "") or "",
+                            })
+                        elif btype == "redacted_thinking":
+                            thinking_blocks.append({
+                                "type": "redacted_thinking",
+                                "data": getattr(block, "data", "") or "",
+                            })
+                    if thinking_blocks and tool_calls:
+                        # Ride along on the first tool call so the blocks
+                        # reach the neutral history even when the loop only
+                        # copies text + tool_calls (see _TC_THINKING_KEY).
+                        tool_calls[0][_TC_THINKING_KEY] = thinking_blocks
 
                     cache_r, cache_w = _anthropic_cache_tokens(final.usage)
                     yield AssistantTurn(
@@ -1482,6 +1618,7 @@ def stream_anthropic(
                         final.usage.output_tokens,
                         cache_read_tokens=cache_r,
                         cache_write_tokens=cache_w,
+                        thinking_blocks=thinking_blocks,
                     )
                 return
 

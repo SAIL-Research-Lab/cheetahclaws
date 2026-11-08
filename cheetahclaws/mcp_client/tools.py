@@ -55,6 +55,15 @@ def _register_tool(tool: MCPTool) -> None:
 
 # ── Initialization ────────────────────────────────────────────────────────────
 
+def _warn_untrusted_servers() -> None:
+    """One stderr line naming project .mcp.json servers skipped by trust."""
+    try:
+        from cheetahclaws import trust as _trust
+        _trust.warn_untrusted_once("mcp", _trust.pending_untrusted())
+    except Exception:
+        pass
+
+
 def initialize_mcp(verbose: bool = False) -> Dict[str, Optional[str]]:
     """Load configs, connect servers, register tools. Idempotent.
 
@@ -66,7 +75,8 @@ def initialize_mcp(verbose: bool = False) -> Dict[str, Optional[str]]:
         if _initialized:
             return _connect_errors
 
-        configs = load_mcp_configs()
+        configs = load_mcp_configs()   # untrusted project servers excluded
+        _warn_untrusted_servers()
         if not configs:
             _initialized = True
             return {}

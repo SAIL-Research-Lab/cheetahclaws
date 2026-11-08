@@ -2,13 +2,134 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from html.parser import HTMLParser
-from urllib.parse import urljoin
+from typing import Callable, Optional
+from urllib.parse import urljoin, urlparse
 
 
 _DEFAULT_WEB_FETCH_MAX_BYTES = 512 * 1024
 _DEFAULT_WEB_MAX_SECONDS = 30
+
+
+# ── SSRF guard ────────────────────────────────────────────────────────────
+#
+# WebFetch is auto-approved as a read-only tool, so a prompt-injected page
+# could otherwise point the model at http://169.254.169.254/ (cloud
+# credentials), http://localhost:8080/admin, or a router on the LAN.  Every
+# hop — the first URL and every redirect target — must resolve only to
+# public addresses.  The IP classification is shared with the kernel Fetch
+# tool (kernel/tools/fetch_tool.py) so the two can't drift apart.
+#
+# Loopback (localhost, 127/8, ::1) is allowed by default when the model asks
+# for it directly — fetching a local dev server is the common case — but a
+# redirect from any non-loopback host into loopback is still refused, so a
+# public page cannot bounce the fetch onto local services.  Turn this off
+# with ``webfetch_allow_loopback: false``.
+#
+# Escape hatches: ``webfetch_allow_private: true`` turns the check off;
+# ``webfetch_allowed_hosts: ["intranet.corp", ".internal.example"]`` exempts
+# exact hosts (or, with a leading dot, a domain and its subdomains).  The
+# CHEETAHCLAWS_WEBFETCH_ALLOW_PRIVATE=1 environment variable is the
+# config-less equivalent of the first.
+#
+# Residual risk: the name is resolved here and again by the HTTP client, so
+# a DNS server answering differently within milliseconds (rebinding) can
+# still slip through.  Use bash_sandbox / network policy for hard isolation.
+
+_ALLOWED_SCHEMES = ("http", "https")
+
+
+def _resolve_host_ips(host: str) -> list[str]:
+    from cheetahclaws.kernel.tools.fetch_tool import resolve_host_ips
+    return resolve_host_ips(host)
+
+
+def _is_loopback_ip(ip_str: str) -> bool:
+    import ipaddress
+    try:
+        ip = ipaddress.ip_address(ip_str.split("%", 1)[0])
+    except ValueError:
+        return False
+    mapped = getattr(ip, "ipv4_mapped", None)
+    return (mapped or ip).is_loopback
+
+
+def _host_allowlisted(host: str, allowed) -> bool:
+    if isinstance(allowed, str):
+        allowed = [allowed]
+    h = host.lower().rstrip(".")
+    for a in allowed or ():
+        a = str(a).strip().lower().rstrip(".")
+        if not a:
+            continue
+        if a.startswith("."):
+            if h == a[1:] or h.endswith(a):
+                return True
+        elif h == a:
+            return True
+    return False
+
+
+def _webfetch_url_guard(config: dict | None) -> Callable[[str], Optional[str]]:
+    """Return a per-hop checker: URL → error string, or None when allowed."""
+    cfg = config or {}
+    allow_private = cfg.get("webfetch_allow_private")
+    if allow_private is None:
+        allow_private = os.environ.get("CHEETAHCLAWS_WEBFETCH_ALLOW_PRIVATE", "0") == "1"
+    allowed_hosts = cfg.get("webfetch_allowed_hosts") or ()
+    allow_loopback = cfg.get("webfetch_allow_loopback")
+    if allow_loopback is None:
+        allow_loopback = os.environ.get("CHEETAHCLAWS_WEBFETCH_ALLOW_LOOPBACK", "1") != "0"
+    # The first hop decides whether loopback is in play: only a fetch that
+    # *starts* on loopback may stay on loopback through its redirects.
+    state = {"first": True, "loopback_chain": False}
+
+    def check(url: str) -> Optional[str]:
+        first = state["first"]
+        state["first"] = False
+        try:
+            parsed = urlparse(url)
+        except ValueError as e:
+            return f"Error: WebFetch could not parse URL {url!r}: {e}"
+        if parsed.scheme.lower() not in _ALLOWED_SCHEMES:
+            return (f"Error: WebFetch only fetches http(s) URLs, "
+                    f"not {parsed.scheme or 'scheme-less'!s} ({url!r}).")
+        host = parsed.hostname
+        if not host:
+            return f"Error: WebFetch URL has no hostname: {url!r}"
+        if allow_private or _host_allowlisted(host, allowed_hosts):
+            return None
+        from cheetahclaws.kernel.tools.fetch_tool import is_private_ip
+        try:
+            ips = _resolve_host_ips(host)
+        except OSError as e:
+            return f"Error: WebFetch could not resolve {host!r}: {e}"
+        blocked = [ip for ip in ips if is_private_ip(ip)]
+        all_loopback = bool(ips) and all(_is_loopback_ip(ip) for ip in ips)
+        if all_loopback and allow_loopback and (first or state["loopback_chain"]):
+            state["loopback_chain"] = True
+            return None
+        state["loopback_chain"] = False
+        if blocked:
+            if all_loopback and allow_loopback:
+                return (
+                    f"Error: WebFetch refused a redirect to {host!r}: a page on "
+                    f"another host may not redirect onto loopback. Fetch the "
+                    f"local URL directly instead."
+                )
+            return (
+                f"Error: WebFetch refused {host!r}: it resolves to the "
+                f"non-public address {blocked[0]} (loopback, private network, "
+                f"link-local or cloud-metadata range). To fetch internal "
+                f"hosts, allow this one with /config webfetch_allowed_hosts="
+                f"[\"{host}\"] or all of them with /config "
+                f"webfetch_allow_private=true."
+            )
+        return None
+
+    return check
 
 # HTML void elements emit no matching end tag (when written bare, e.g.
 # ``<img>``/``<br>`` as DuckDuckGo serves them), so depth counters that
@@ -196,7 +317,9 @@ def _read_response_bytes(
 
 def _stream_identity_bytes(httpx, url: str, *, params: dict | None,
                            headers: dict[str, str], max_bytes: int,
-                           deadline: float) -> tuple[bytes | None, bool, dict, str, str | None]:
+                           deadline: float,
+                           url_guard: Callable[[str], Optional[str]] | None = None,
+                           ) -> tuple[bytes | None, bool, dict, str, str | None]:
     """Follow a small redirect chain without resetting the total deadline."""
     current_url = url
     current_params = params
@@ -204,6 +327,10 @@ def _stream_identity_bytes(httpx, url: str, *, params: dict | None,
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             return None, True, {}, "utf-8", "Error: web request exceeded its elapsed-time budget."
+        if url_guard is not None:
+            refused = url_guard(current_url)
+            if refused:
+                return None, True, {}, "utf-8", refused
         with httpx.stream(
             "GET", current_url, params=current_params, headers=headers,
             timeout=remaining, follow_redirects=False,
@@ -274,6 +401,7 @@ async def _stream_identity_bytes_async_impl(
     headers: dict[str, str],
     max_bytes: int,
     deadline: float,
+    url_guard: Callable[[str], Optional[str]] | None = None,
 ) -> tuple[bytes | None, bool, dict, str, str | None]:
     """Async transport path; outer ``wait_for`` owns the global deadline."""
     remaining = deadline - time.monotonic()
@@ -288,6 +416,10 @@ async def _stream_identity_bytes_async_impl(
         current_url = url
         current_params = params
         for redirect_count in range(6):
+            if url_guard is not None:
+                refused = url_guard(current_url)   # every hop, redirects too
+                if refused:
+                    return None, True, {}, "utf-8", refused
             request = client.build_request(
                 "GET", current_url, params=current_params,
             )
@@ -326,6 +458,7 @@ async def _stream_identity_bytes_async(
     headers: dict[str, str],
     max_bytes: int,
     deadline: float,
+    url_guard: Callable[[str], Optional[str]] | None = None,
 ) -> tuple[bytes | None, bool, dict, str, str | None]:
     """Enforce one cancellable elapsed-time budget for the entire request."""
     remaining = deadline - time.monotonic()
@@ -335,7 +468,7 @@ async def _stream_identity_bytes_async(
         return await asyncio.wait_for(
             _stream_identity_bytes_async_impl(
                 httpx, url, params=params, headers=headers,
-                max_bytes=max_bytes, deadline=deadline,
+                max_bytes=max_bytes, deadline=deadline, url_guard=url_guard,
             ),
             timeout=remaining,
         )
@@ -345,18 +478,20 @@ async def _stream_identity_bytes_async(
 
 def _stream_bounded_identity_bytes(httpx, url: str, *, params: dict | None,
                                    headers: dict[str, str], max_bytes: int,
-                                   deadline: float) -> tuple[bytes | None, bool, dict, str, str | None]:
+                                   deadline: float,
+                                   url_guard: Callable[[str], Optional[str]] | None = None,
+                                   ) -> tuple[bytes | None, bool, dict, str, str | None]:
     """Use cancellable async I/O in production, retaining a minimal test fallback."""
     if not hasattr(httpx, "AsyncClient"):
         # Lightweight fake HTTP clients used by unit tests only implement the
         # synchronous ``stream`` API. Real httpx always exposes AsyncClient.
         return _stream_identity_bytes(
             httpx, url, params=params, headers=headers,
-            max_bytes=max_bytes, deadline=deadline,
+            max_bytes=max_bytes, deadline=deadline, url_guard=url_guard,
         )
     return asyncio.run(_stream_identity_bytes_async(
         httpx, url, params=params, headers=headers,
-        max_bytes=max_bytes, deadline=deadline,
+        max_bytes=max_bytes, deadline=deadline, url_guard=url_guard,
     ))
 
 
@@ -365,7 +500,14 @@ def _webfetch(
     prompt: str = None,
     max_bytes: int = _DEFAULT_WEB_FETCH_MAX_BYTES,
     max_seconds: int | float = _DEFAULT_WEB_MAX_SECONDS,
+    config: dict | None = None,
 ) -> str:
+    """Fetch ``url`` (bounded in bytes and time) and return its text.
+
+    Every hop, redirects included, must resolve to public addresses; see the
+    SSRF guard above for the ``webfetch_allow_private`` /
+    ``webfetch_allowed_hosts`` escape hatches carried in ``config``.
+    """
     try:
         import httpx
         byte_limit = max(1, int(max_bytes or _DEFAULT_WEB_FETCH_MAX_BYTES))
@@ -375,6 +517,7 @@ def _webfetch(
             httpx, url, params=None,
             headers={"User-Agent": "NanoClaude/1.0", "Accept-Encoding": "identity"},
             max_bytes=byte_limit, deadline=deadline,
+            url_guard=_webfetch_url_guard(config),
         )
         if error:
             return error

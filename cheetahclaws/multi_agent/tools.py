@@ -68,6 +68,9 @@ def _agent_tool(params: dict, config: dict) -> str:
         agent_def=agent_def,
         isolation=isolation,
         name=name,
+        # Full parent config (private keys included) so the sub-agent's
+        # permission requests can use the parent's grants / approver.
+        parent_config=config,
     )
 
     if task.status == "failed":

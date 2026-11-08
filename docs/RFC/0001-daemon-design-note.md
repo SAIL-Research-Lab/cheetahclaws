@@ -1,11 +1,11 @@
 # Design Note: cheetahclaws daemon — IPC, permission routing, local auth
 
 - **Status:** Draft for review
-- **Tracking issue:** [#68](https://github.com/SafeRL-Lab/cheetahclaws/issues/68)
+- **Tracking issue:** [#68](https://github.com/SAIL-Research-Lab/cheetahclaws/issues/68)
 - **Author:** @mxh1999
 - **Last updated:** 2026-04-29
 
-This note covers the three items requested in [#68](https://github.com/SafeRL-Lab/cheetahclaws/issues/68): IPC + transport, permission routing, and local auth. Scope is intentionally narrow — these are the contract the foundation PR will commit to. Service inventory, phasing, persistence, and cost guardrail defaults were settled in the issue thread and are not re-litigated here.
+This note covers the three items requested in [#68](https://github.com/SAIL-Research-Lab/cheetahclaws/issues/68): IPC + transport, permission routing, and local auth. Scope is intentionally narrow — these are the contract the foundation PR will commit to. Service inventory, phasing, persistence, and cost guardrail defaults were settled in the issue thread and are not re-litigated here.
 
 ## 1. IPC: transport and protocol
 

@@ -170,6 +170,17 @@ def make_snapshot(
                     backup_time=now,
                 )
 
+    pre_edit: dict[str, dict] = {}
+    if tracked_edits:
+        try:
+            from .hooks import get_pre_edit_state
+            details = get_pre_edit_state(session_id)
+        except Exception:
+            details = {}
+        for path, backup_name in tracked_edits.items():
+            name, existed = details.get(path, (backup_name, backup_name is not None))
+            pre_edit[path] = {"backup_filename": name, "existed": bool(existed)}
+
     next_id = (snapshots[-1].id + 1) if snapshots else 1
 
     snapshot = Snapshot(
@@ -186,6 +197,7 @@ def make_snapshot(
             "cache_write": getattr(state, "total_cache_write_tokens", 0),
         },
         file_backups=new_backups,
+        pre_edit_backups=pre_edit,
     )
 
     snapshots.append(snapshot)
@@ -255,6 +267,37 @@ def rewind_files(session_id: str, snapshot_id: int) -> list[str]:
         except Exception as e:
             restored.append(f"error restoring {file_path}: {e}")
 
+    # Files that were first touched *after* this snapshot are not in its
+    # file_backups; restore them from the pre-edit backup taken right before
+    # their earliest later modification (or delete them if they were new).
+    handled = set(snapshot.file_backups)
+    for later in sorted(_load_snapshots(session_id), key=lambda s: s.id):
+        if later.id <= snapshot_id:
+            continue
+        for file_path, info in later.pre_edit_backups.items():
+            if file_path in handled:
+                continue
+            handled.add(file_path)
+            p = Path(file_path)
+            name = info.get("backup_filename")
+            try:
+                if not info.get("existed", name is not None):
+                    if p.exists():
+                        p.unlink()
+                        restored.append(f"deleted: {file_path}")
+                elif name:
+                    backup_path = bdir / name
+                    if backup_path.exists():
+                        p.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(str(backup_path), str(p))
+                        restored.append(f"restored: {file_path}")
+                    else:
+                        restored.append(f"backup missing: {file_path}")
+                else:
+                    restored.append(f"not restorable (no backup, e.g. too large): {file_path}")
+            except Exception as e:
+                restored.append(f"error restoring {file_path}: {e}")
+
     return restored
 
 
@@ -273,6 +316,7 @@ def files_changed_since(session_id: str, snapshot_id: int) -> list[str]:
     for s in snapshots:
         if s.id <= snapshot_id:
             continue
+        changed.update(p for p in s.pre_edit_backups if p not in target.file_backups)
         for path in s.file_backups:
             if path not in target.file_backups or \
                s.file_backups[path].version != target.file_backups[path].version:

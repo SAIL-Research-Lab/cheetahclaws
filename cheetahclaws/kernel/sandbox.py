@@ -6,8 +6,9 @@ blocks (preexec_fn, argv wrapper, one-shot run helper) but does not
 spawn or supervise long-running agents. F-4 (subprocess agent runner)
 will adopt the API.
 
-Strictly additive: nothing else in the codebase imports this module
-yet. Importing it has no side effects beyond loading stdlib modules.
+Also provides the opt-in Bash tool sandbox (``shell_sandbox_argv``,
+used by tools/shell.py when ``bash_sandbox`` is set). Importing this
+module has no side effects beyond loading stdlib modules.
 
 Threat model: defends against buggy/naive agents on a single-user host.
 Out of scope: deliberately malicious agents with root, side-channel
@@ -263,6 +264,73 @@ def apply_rlimits_in_child(policy: SandboxPolicy) -> Callable[[], None]:
 # ── Bubblewrap argv wrapping ───────────────────────────────────────────────
 
 
+def _covered_by(path: str, binds: Sequence[str]) -> bool:
+    """True if ``path`` already sits under one of ``binds``."""
+    for b in binds:
+        b = b.rstrip("/") or "/"
+        if path == b or path.startswith(b + "/") or b == "/":
+            return True
+    return False
+
+
+def interpreter_bind_paths(
+    argv: Sequence[str], existing: Sequence[str] = (),
+) -> list[str]:
+    """Read-only binds needed to exec ``argv[0]`` when it is this Python.
+
+    A venv's ``bin/python`` is a symlink into the base installation
+    (``sys.base_prefix``), often living somewhere bwrap was not told about
+    (``/tmp/venv`` → ``~/anaconda3``), so bwrap's execvp failed with
+    "No such file or directory". When ``argv[0]`` resolves to the running
+    interpreter we bind the venv prefix, the base prefix and every hop of
+    the symlink chain — both as written and fully resolved, since $HOME may
+    itself be a symlink (``/home/x`` → ``/srv/home/x``).
+
+    Never binds ``/`` or a directory containing the user's home (that would
+    re-expose ``~/.ssh``); paths already covered by ``existing`` are skipped.
+    """
+    if not argv:
+        return []
+    exe = str(argv[0])
+    try:
+        if os.path.realpath(exe) != os.path.realpath(sys.executable):
+            return []
+    except OSError:
+        return []
+
+    candidates: list[str] = []
+    for prefix in (sys.prefix, sys.exec_prefix,
+                   getattr(sys, "base_prefix", sys.prefix),
+                   getattr(sys, "base_exec_prefix", sys.exec_prefix)):
+        if prefix:
+            candidates.append(os.path.abspath(prefix))
+    # Every hop of the executable's symlink chain needs its directory.
+    hop, seen = os.path.abspath(exe), set()
+    while hop not in seen:
+        seen.add(hop)
+        candidates.append(os.path.dirname(hop))
+        if not os.path.islink(hop):
+            break
+        target = os.readlink(hop)
+        hop = os.path.normpath(os.path.join(os.path.dirname(hop), target))
+    candidates.append(os.path.dirname(os.path.realpath(exe)))
+
+    home = os.path.realpath(os.path.expanduser("~"))
+    out: list[str] = []
+    for c in candidates:
+        for p in (c, os.path.realpath(c)):
+            p = p.rstrip("/") or "/"
+            if p == "/" or not os.path.exists(p):
+                continue
+            rp = os.path.realpath(p)
+            if rp == home or home.startswith(rp.rstrip("/") + "/"):
+                continue
+            if p in out or _covered_by(p, tuple(existing) + tuple(out)):
+                continue
+            out.append(p)
+    return out
+
+
 def wrap_with_bubblewrap(
     argv: Sequence[str], policy: SandboxPolicy,
 ) -> list[str]:
@@ -289,11 +357,140 @@ def wrap_with_bubblewrap(
         cmd.extend(["--ro-bind", path, path])
     for path in policy.bind_rw:
         cmd.extend(["--bind", path, path])
+    for path in interpreter_bind_paths(argv, policy.bind_ro + policy.bind_rw):
+        cmd.extend(["--ro-bind", path, path])
     if policy.workdir:
         cmd.extend(["--chdir", policy.workdir])
     cmd.append("--")
     cmd.extend(argv)
     return cmd
+
+
+# ── Shell sandbox (Bash tool) ──────────────────────────────────────────────
+#
+# A whole-host view for an interactive shell: everything is readable (so
+# compilers, interpreters and the user's toolchain keep working), nothing is
+# writable except the workspace (``workspace-write``) or nothing at all
+# (``read-only``), /tmp is a private tmpfs, credential stores are masked,
+# and the network is unshared unless asked for.
+
+SHELL_SANDBOX_MODES = ("off", "workspace-write", "read-only")
+
+# Masked inside the shell sandbox. Directories become an empty tmpfs, files
+# are replaced by /dev/null.
+_SHELL_HIDDEN_DIRS = (".ssh", ".aws", ".gnupg", ".kube", ".docker",
+                      ".config/gcloud", ".azure", ".cheetahclaws")
+_SHELL_HIDDEN_FILES = (".netrc", ".pgpass", ".git-credentials", ".npmrc",
+                       ".pypirc")
+
+
+def _shell_hidden_paths() -> tuple[list[str], list[str]]:
+    # Resolved: bwrap cannot mount onto a path whose parent is a symlink
+    # (/home → /srv/home), and sandbox-exec matches real paths only.
+    home = os.path.realpath(os.path.expanduser("~"))
+    dirs = [os.path.realpath(os.path.join(home, d)) for d in _SHELL_HIDDEN_DIRS]
+    files = [os.path.realpath(os.path.join(home, f)) for f in _SHELL_HIDDEN_FILES]
+    return ([d for d in dirs if os.path.isdir(d)],
+            [f for f in files if os.path.isfile(f)])
+
+
+def _bubblewrap_shell_argv(argv, mode, workspace, network, writable):
+    bwrap = shutil.which("bwrap")
+    if not bwrap:
+        raise SandboxNotAvailable(
+            "bash_sandbox requires bubblewrap (`bwrap`), which is not "
+            "installed. Install it (e.g. `apt install bubblewrap`) or set "
+            "/config bash_sandbox=off."
+        )
+    cmd = [bwrap, "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc",
+           "--tmpfs", "/tmp", "--unshare-pid", "--unshare-ipc",
+           "--die-with-parent", "--new-session"]
+    if not network:
+        cmd.append("--unshare-net")
+    hidden_dirs, hidden_files = _shell_hidden_paths()
+    for d in hidden_dirs:
+        cmd.extend(["--tmpfs", d])
+    for f in hidden_files:
+        cmd.extend(["--ro-bind", "/dev/null", f])
+    rw = list(writable)
+    if mode == "workspace-write" and workspace:
+        rw.insert(0, workspace)
+    elif workspace and os.path.exists(workspace):
+        # Re-expose a workspace that sits under the private /tmp or a
+        # masked directory; read-only in this mode.
+        cmd.extend(["--ro-bind", workspace, workspace])
+    for p in rw:
+        if p and os.path.exists(p):
+            cmd.extend(["--bind", p, p])
+    if workspace and os.path.isdir(workspace):
+        cmd.extend(["--chdir", workspace])
+    cmd.append("--")
+    cmd.extend(argv)
+    return cmd
+
+
+def _sb_quote(path: str) -> str:
+    return '"' + path.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _seatbelt_shell_argv(argv, mode, workspace, network, writable):
+    exe = shutil.which("sandbox-exec") or (
+        "/usr/bin/sandbox-exec" if os.path.exists("/usr/bin/sandbox-exec") else None)
+    if not exe:
+        raise SandboxNotAvailable(
+            "bash_sandbox requires /usr/bin/sandbox-exec on macOS; set "
+            "/config bash_sandbox=off to run unsandboxed."
+        )
+    rules = ["(version 1)", "(allow default)", "(deny file-write*)"]
+    allow = ["/private/tmp", "/private/var/folders", "/dev"]
+    if mode == "workspace-write" and workspace:
+        allow.append(workspace)
+    allow.extend(p for p in writable if p)
+    rules.append("(allow file-write* " + " ".join(
+        f"(subpath {_sb_quote(os.path.realpath(p))})" for p in allow) + ")")
+    hidden_dirs, hidden_files = _shell_hidden_paths()
+    for d in hidden_dirs:
+        rules.append(f"(deny file-read* (subpath {_sb_quote(os.path.realpath(d))}))")
+    for f in hidden_files:
+        rules.append(f"(deny file-read* (literal {_sb_quote(os.path.realpath(f))}))")
+    if not network:
+        rules.append("(deny network*)")
+    return [exe, "-p", "\n".join(rules), *argv]
+
+
+def shell_sandbox_argv(
+    argv: Sequence[str],
+    mode: str,
+    *,
+    workspace: Optional[str] = None,
+    network: bool = False,
+    writable: Sequence[str] = (),
+) -> list[str]:
+    """Wrap a shell ``argv`` for the Bash tool's opt-in sandbox.
+
+    ``mode`` is one of :data:`SHELL_SANDBOX_MODES`; ``"off"`` returns
+    ``argv`` unchanged. Linux uses bubblewrap, macOS uses ``sandbox-exec``.
+    Raises :class:`SandboxNotAvailable` when the mode is on but the platform
+    has no supported backend — the caller must fail closed rather than run
+    the command unsandboxed.
+    """
+    if mode not in SHELL_SANDBOX_MODES:
+        raise SandboxPolicyError(
+            f"bash_sandbox must be one of {SHELL_SANDBOX_MODES}, got {mode!r}"
+        )
+    argv = list(argv)
+    if mode == "off":
+        return argv
+    workspace = os.path.realpath(workspace) if workspace else None
+    writable = [os.path.realpath(p) for p in writable if isinstance(p, str) and p]
+    if sys.platform.startswith("linux"):
+        return _bubblewrap_shell_argv(argv, mode, workspace, network, writable)
+    if sys.platform == "darwin":
+        return _seatbelt_shell_argv(argv, mode, workspace, network, writable)
+    raise SandboxNotAvailable(
+        f"bash_sandbox is not supported on {sys.platform}; set "
+        "/config bash_sandbox=off to run unsandboxed."
+    )
 
 
 # ── One-shot runner ────────────────────────────────────────────────────────

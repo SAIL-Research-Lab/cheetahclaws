@@ -353,6 +353,22 @@ def _wx_qr_login(config: dict, bot_type: str = _ILINK_DEFAULT_BOT_TYPE,
 
 # ── Poll loop ──────────────────────────────────────────────────────────────
 
+def _wx_sender_authorized(from_uid: str, config: dict) -> bool:
+    """Shared allowlist check (bridges/auth.py) for one WeChat sender.
+
+    ``filehelper`` is the owner's own 文件传输助手 — only the logged-in
+    account can write there, so it is always trusted. ``@chatroom`` ids
+    are groups and never auto-bind as owner.
+    """
+    from cheetahclaws.bridges import auth as _bauth
+    if from_uid == "filehelper":
+        return True
+    return _bauth.is_authorized(
+        "wechat", from_uid, from_uid, config,
+        is_private=not from_uid.endswith("@chatroom"),
+    )
+
+
 def _wx_poll_loop(token: str, base_url: str, config: dict) -> str:
     """Returns "stopped", "auth_error", or raises on unexpected fatal error."""
     from cheetahclaws.tools import _wx_thread_local
@@ -497,6 +513,32 @@ def _wx_poll_loop(token: str, base_url: str, config: dict) -> str:
                     if consumed:
                         print(clr(f"\n  ✓ smart-reply panel resolved", "dim"))
                         continue
+
+                # ── Sender authorization (bridges/auth.py) ─────────────────
+                # Everything below can reach shell / slash / agent dispatch.
+                # Unapproved senders may only feed smart-reply drafting,
+                # which proposes replies to the owner and runs no tools.
+                if not _wx_sender_authorized(from_uid, config):
+                    if _sr.is_smart_reply_target(from_uid, config, text=text):
+                        label = (msg.get("from_user_nickname")
+                                 or msg.get("from_username")
+                                 or from_uid[:8])
+                        _sr.trigger_smart_reply(
+                            target_uid=from_uid,
+                            target_label=str(label),
+                            message=text,
+                            store=_smart_store,
+                            config=config,
+                            send_to_filehelper=lambda txt: _wx_send(_sr._FILEHELPER_UID, txt, config),
+                            contacts=_smart_contacts,
+                        )
+                        continue
+                    from cheetahclaws.bridges import auth as _bauth
+                    _bauth.log_refusal("wechat", from_uid)
+                    print(clr(f"\n  ⛔ WeChat [{from_uid}] not in wechat_allowed_users — ignored", "yellow"))
+                    if _bauth.should_reply_refusal("wechat", from_uid):
+                        _wx_send(from_uid, _bauth.refusal_text("wechat", from_uid), config)
+                    continue
 
                 print(clr(f"\n  📩 WeChat [{from_uid}]: {text}", "cyan"))
 

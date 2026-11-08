@@ -3,8 +3,8 @@
 <br>  
 
 <div align="center">
-  <a href="[https://github.com/SafeRL-Lab/Robust-Gymnasium](https://github.com/SafeRL-Lab/cheetahclaws)">
-    <img src="https://raw.githubusercontent.com/SafeRL-Lab/cheetahclaws/main/docs/media/logos/logo-5.png" alt="Logo" width="280"> 
+  <a href="[https://github.com/SafeRL-Lab/Robust-Gymnasium](https://github.com/SAIL-Research-Lab/cheetahclaws)">
+    <img src="https://raw.githubusercontent.com/SAIL-Research-Lab/cheetahclaws/main/docs/media/logos/logo-5.png" alt="Logo" width="280"> 
   </a>
 
   
@@ -14,7 +14,7 @@
     ·
     <a href="https://arxiv.org/pdf/2605.26112">Scaling the Harness</a>
     ·
-    <a href="https://github.com/SafeRL-Lab/cheetahclaws/issues">Issue</a>
+    <a href="https://github.com/SAIL-Research-Lab/cheetahclaws/issues">Issue</a>
     ·
     <a href="https://pypi.org/project/cheetahclaws/">
       <img src="https://img.shields.io/badge/downloads-9.6K-blue" alt="Downloads 9.6K" align="absmiddle">
@@ -61,7 +61,7 @@ Für weitere News siehe [hier](../news.md).
 
 <div align="center">
   <a href="https://www.atlascloud.ai/">
-    <img src="https://github.com/SafeRL-Lab/cheetahclaws/blob/main/docs/sponsors/atlas_cloud/ATLAS_CLOUD_LOGO_BLACK.svg" alt="Atlas Cloud" width="180"> 
+    <img src="https://github.com/SAIL-Research-Lab/cheetahclaws/blob/main/docs/sponsors/atlas_cloud/ATLAS_CLOUD_LOGO_BLACK.svg" alt="Atlas Cloud" width="180"> 
   </a>
 </div>
 
@@ -91,25 +91,25 @@ CheetahClaws: **Eine schnelle** und **benutzerfreundliche** Python-native Agent-
 ### Demos
 
 <div align=center>
-<img src="https://raw.githubusercontent.com/SafeRL-Lab/cheetahclaws/main/docs/media/demos/demo.gif" width="850"/>
+<img src="https://raw.githubusercontent.com/SAIL-Research-Lab/cheetahclaws/main/docs/media/demos/demo.gif" width="850"/>
 </div>
 <div align=center><sub><i>Aufgabenausführung im Terminal</i></sub></div>
 
 <br/>
 
 <div align=center>
-<img src="https://raw.githubusercontent.com/SafeRL-Lab/cheetahclaws/main/docs/media/demos/web_demo.gif" width="850"/>
+<img src="https://raw.githubusercontent.com/SAIL-Research-Lab/cheetahclaws/main/docs/media/demos/web_demo.gif" width="850"/>
 </div>
 <div align=center><sub><i>Web-UI: Browser-Chat – Seitenleiste, Werkzeugkarten, Genehmigungsaufforderungen, Markdown-Streaming</i></sub></div>
 
 <br/>
 
 <div align=center>
-<img src="https://raw.githubusercontent.com/SafeRL-Lab/cheetahclaws/main/docs/media/demos/trading_demo.gif" width="850"/>
+<img src="https://raw.githubusercontent.com/SAIL-Research-Lab/cheetahclaws/main/docs/media/demos/trading_demo.gif" width="850"/>
 </div>
 <div align=center><sub><i>Autonomer Trading-Agent</i></sub></div>
 
-> Weitere animierte Demos (Code-Review, `/research`, `/brainstorm`, `/lab`, Telegram-/WeChat-/Slack-Brücken) finden sich in [`docs/media/`](https://github.com/SafeRL-Lab/cheetahclaws/tree/main/docs/media/).
+> Weitere animierte Demos (Code-Review, `/research`, `/brainstorm`, `/lab`, Telegram-/WeChat-/Slack-Brücken) finden sich in [`docs/media/`](https://github.com/SAIL-Research-Lab/cheetahclaws/tree/main/docs/media/).
 
 ---
 
@@ -247,7 +247,7 @@ Funktioniert unter **Linux, macOS, WSL2 und Android (Termux)** (Python 3.10+). D
 ### Alternative: Ein-Zeilen-Installationsskript
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/SafeRL-Lab/cheetahclaws/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/SAIL-Research-Lab/cheetahclaws/main/scripts/install.sh | bash
 ```
 
 Lade nach der Installation deine Shell neu, damit `cheetahclaws` im PATH liegt:
@@ -261,7 +261,7 @@ cheetahclaws        # start chatting!
 ### Alternative: Installation mit `pip` aus dem Quellcode
 
 ```bash
-git clone https://github.com/SafeRL-Lab/cheetahclaws.git
+git clone https://github.com/SAIL-Research-Lab/cheetahclaws.git
 cd cheetahclaws
 pip install .                       # then: cheetahclaws
 git pull && pip install --force-reinstall .   # to update
@@ -285,7 +285,7 @@ pip install ".[all]"        # everything above
 ### Alternative: Installation mit `uv`
 
 ```bash
-git clone https://github.com/SafeRL-Lab/cheetahclaws.git && cd cheetahclaws
+git clone https://github.com/SAIL-Research-Lab/cheetahclaws.git && cd cheetahclaws
 uv tool install ".[all]"            # minimal: uv tool install .
 uv tool install ".[all]" --reinstall   # update   ·   uv tool uninstall cheetahclaws
 ```
@@ -293,7 +293,7 @@ uv tool install ".[all]" --reinstall   # update   ·   uv tool uninstall cheetah
 ### Alternative: direkt aus dem Quellcode ausführen (ohne Installation)
 
 ```bash
-git clone https://github.com/SafeRL-Lab/cheetahclaws.git && cd cheetahclaws
+git clone https://github.com/SAIL-Research-Lab/cheetahclaws.git && cd cheetahclaws
 pip install -r requirements.txt
 python cheetahclaws.py              # changes take effect immediately
 ```
@@ -477,7 +477,7 @@ Siehe die [Referenz-Anleitung](../guides/reference.md) für alle 50+ Slash-Befeh
 Wir freuen uns über Beiträge! Siehe die [Mitwirken-Anleitung](../../CONTRIBUTING.md) für Architektur, Konventionen und die PR-Checkliste.
 
 ```bash
-git clone https://github.com/SafeRL-Lab/cheetahclaws.git && cd cheetahclaws
+git clone https://github.com/SAIL-Research-Lab/cheetahclaws.git && cd cheetahclaws
 pip install -r requirements.txt && pip install pytest
 python -m pytest tests/ -x -q       # 341+ tests should pass
 python cheetahclaws.py              # run the REPL

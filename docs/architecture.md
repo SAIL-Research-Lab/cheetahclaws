@@ -778,7 +778,7 @@ for the wire protocol and lifecycle.
 This is the closest thing the project has to a "7 × 24 agent"
 runtime today; see CONTRIBUTING.md for the current production-
 readiness gaps (daemon mode, SQLite session store, cost guardrails).
-The daemon-mode work is tracked in [issue #68](https://github.com/SafeRL-Lab/cheetahclaws/issues/68);
+The daemon-mode work is tracked in [issue #68](https://github.com/SAIL-Research-Lab/cheetahclaws/issues/68);
 the IPC / permission-routing / local-auth contract is captured in
 [RFC 0001](RFC/0001-daemon-design-note.md) and validated end-to-end by
 the `daemon/` reference scaffolding ([spike notes](RFC/0001-spike-notes.md)).
@@ -816,7 +816,7 @@ today it stands alone.
 
 The headless `cheetahclaws serve` runtime — foundation for the
 "long-running services survive REPL exit" work tracked in
-[issue #68](https://github.com/SafeRL-Lab/cheetahclaws/issues/68).
+[issue #68](https://github.com/SAIL-Research-Lab/cheetahclaws/issues/68).
 Designed in [RFC 0001](RFC/0001-daemon-design-note.md);
 implementation phasing in
 [RFC 0002](RFC/0002-daemon-foundation-roadmap.md).

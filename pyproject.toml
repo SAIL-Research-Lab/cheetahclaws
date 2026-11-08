@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cheetahclaws"
-version = "3.5.89.1"
+version = "3.5.90"
 description = "CheetahClaws: Agent Harness Infrastructure for Long-Horizon, Multi-Model, and Tool-Using AI Systems"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -57,9 +57,9 @@ all         = ["sounddevice", "Pillow", "prompt_toolkit>=3.0.43", "playwright", 
 
 [project.urls]
 Homepage = "https://cheetahclaws.github.io/"
-Repository = "https://github.com/SafeRL-Lab/cheetahclaws"
-Issues = "https://github.com/SafeRL-Lab/cheetahclaws/issues"
-Documentation = "https://github.com/SafeRL-Lab/cheetahclaws/tree/main/docs"
+Repository = "https://github.com/SAIL-Research-Lab/cheetahclaws"
+Issues = "https://github.com/SAIL-Research-Lab/cheetahclaws/issues"
+Documentation = "https://github.com/SAIL-Research-Lab/cheetahclaws/tree/main/docs"
 
 [project.scripts]
 cheetahclaws = "cheetahclaws.cli:main"

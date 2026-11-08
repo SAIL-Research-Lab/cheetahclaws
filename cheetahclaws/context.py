@@ -101,9 +101,185 @@ def get_git_info() -> str:
     return result
 
 
-def get_claude_md() -> str:
-    """Load CLAUDE.md from cwd or parents, and ~/.claude/CLAUDE.md.
+# ── Project instructions (AGENTS.md / CLAUDE.md / …) ─────────────────────
 
+# Per-directory instruction files, in load order.  AGENTS.md is the shared
+# cross-tool standard (Codex, Muse, …); CLAUDE.md / CLAUDE.local.md keep
+# Claude Code compatibility; .cheetahclaws/INSTRUCTIONS.md is our own.
+_PROJECT_INSTRUCTION_FILES = (
+    ("AGENTS.md", "AGENTS.md"),
+    ("CLAUDE.md", "CLAUDE.md"),
+    ("CLAUDE.local.md", "CLAUDE.local.md"),
+    (os.path.join(".cheetahclaws", "INSTRUCTIONS.md"), "INSTRUCTIONS.md"),
+)
+_IMPORT_MAX_DEPTH = 5
+_INSTRUCTION_FILE_MAX_CHARS = 64_000      # per file (incl. imports)
+_INSTRUCTIONS_TOTAL_MAX_CHARS = 200_000   # whole block
+# `@path` import: not preceded by a word char/backtick (skips emails and
+# inline code), path chars only.  Resolved only if the file exists.
+_IMPORT_RE = re.compile(r"(?<![\w`@])@((?:~|\.{1,2})?/?[\w.\-+/~]+)")
+_FENCE_RE = re.compile(r"^\s*(```|~~~)")
+_SECRET_DIR_NAMES = (".ssh", ".aws", ".gnupg", ".kube", ".docker")
+_SECRET_FILE_RE = re.compile(
+    r"(^id_[a-z0-9]+$)|(\.pem$)|(\.key$)|(^\.env(\..*)?$)|(^\.netrc$)|"
+    r"(^credentials(\.json)?$)|(^shadow$)", re.I)
+
+
+def _find_git_root(start: Path) -> Path | None:
+    p = start
+    for _ in range(64):
+        if (p / ".git").exists():
+            return p
+        if p.parent == p:
+            return None
+        p = p.parent
+    return None
+
+
+def _legacy_nearest_claude_md_dir(start: Path) -> Path | None:
+    """Directory of the nearest CLAUDE.md walking up ≤10 levels (the
+    historical lookup, kept so a CLAUDE.md above the git root still loads)."""
+    p = start
+    for _ in range(10):
+        if (p / "CLAUDE.md").exists():
+            return p
+        if p.parent == p:
+            return None
+        p = p.parent
+    return None
+
+
+def _project_instruction_dirs(cwd: Path) -> list[Path]:
+    """Directories to scan, outermost first: git root → cwd (all levels).
+    Without a git repo, only the nearest directory holding an instruction
+    file (walking up ≤10 levels)."""
+    git_root = _find_git_root(cwd)
+    dirs: list[Path] = []
+    if git_root is not None:
+        p = cwd
+        while True:
+            dirs.append(p)
+            if p == git_root or p.parent == p:
+                break
+            p = p.parent
+        dirs.reverse()
+        legacy = _legacy_nearest_claude_md_dir(cwd)
+        if legacy is not None and legacy not in dirs:
+            dirs.insert(0, legacy)
+        return dirs
+    p = cwd
+    for _ in range(10):
+        if any((p / rel).exists() for rel, _ in _PROJECT_INSTRUCTION_FILES):
+            return [p]
+        if p.parent == p:
+            break
+        p = p.parent
+    return []
+
+
+def _is_sensitive_path(path: Path) -> bool:
+    parts = set(path.parts)
+    if any(d in parts for d in _SECRET_DIR_NAMES):
+        return True
+    return bool(_SECRET_FILE_RE.search(path.name))
+
+
+def _read_instruction_file(path: Path) -> str | None:
+    try:
+        if not path.is_file():
+            return None
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            text = fh.read(_INSTRUCTION_FILE_MAX_CHARS + 1)
+    except Exception:
+        return None
+    if len(text) > _INSTRUCTION_FILE_MAX_CHARS:
+        text = (text[:_INSTRUCTION_FILE_MAX_CHARS]
+                + f"\n[… truncated at {_INSTRUCTION_FILE_MAX_CHARS:,} chars]")
+    return text
+
+
+def _find_imports(text: str, base_dir: Path) -> list[Path]:
+    """Return existing files referenced as ``@path`` outside code fences."""
+    found: list[Path] = []
+    in_fence = False
+    for line in text.splitlines():
+        if _FENCE_RE.match(line):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        for m in _IMPORT_RE.finditer(line):
+            raw = m.group(1).rstrip(".,;:)")
+            if not raw or raw in (".", ".."):
+                continue
+            candidate = Path(os.path.expanduser(raw))
+            if not candidate.is_absolute():
+                candidate = base_dir / candidate
+            try:
+                if candidate.is_file():
+                    found.append(candidate)
+            except OSError:
+                continue
+    return found
+
+
+def _collect_instruction_file(path: Path, label: str, seen_real: set,
+                              seen_hash: set, parts: list, warnings: list,
+                              budget: list, depth: int = 0,
+                              chain: tuple = ()) -> None:
+    """Append ``path`` (and, recursively, its ``@imports``) to ``parts``.
+
+    Dedupes by real path and by content hash; cycle-safe via ``chain`` and
+    ``seen_real``; stops at depth ``_IMPORT_MAX_DEPTH`` and when the total
+    character budget (``budget[0]``) is spent.
+    """
+    try:
+        real = path.resolve()
+    except Exception:
+        return
+    if real in seen_real or real in chain or budget[0] <= 0:
+        return
+    if depth > 0 and _is_sensitive_path(real):
+        warnings.append(f"[instructions] Skipped import of sensitive path {path}")
+        return
+    text = _read_instruction_file(real)
+    if text is None:
+        return
+    seen_real.add(real)
+    import hashlib
+    digest = hashlib.sha256(text.strip().encode("utf-8", "replace")).hexdigest()
+    if digest in seen_hash:
+        return
+    seen_hash.add(digest)
+    threat = _scan_for_threats(text, f"{label} ({path})")
+    if threat:
+        warnings.append(threat)
+        return
+    if len(text) > budget[0]:
+        text = text[:budget[0]] + "\n[… instructions budget exhausted]"
+    budget[0] -= len(text)
+    parts.append(f"[{label}]\n{text}")
+    if depth >= _IMPORT_MAX_DEPTH:
+        return
+    for imp in _find_imports(text, real.parent):
+        _collect_instruction_file(
+            imp, f"Imported by {path.name}: {imp}", seen_real, seen_hash,
+            parts, warnings, budget, depth + 1, chain + (real,),
+        )
+
+
+def get_claude_md() -> str:
+    """Load project / user instruction files.
+
+    Sources, outermost first:
+      * user level: ``~/.claude/CLAUDE.md`` and ``~/.cheetahclaws/AGENTS.md``
+      * every directory from the git root down to cwd (or, outside git, the
+        nearest directory that has one): ``AGENTS.md``, ``CLAUDE.md``,
+        ``CLAUDE.local.md``, ``.cheetahclaws/INSTRUCTIONS.md``
+      * ``@path/to/file.md`` imports inside any of them, resolved relative
+        to the including file (depth ≤ 5, cycle-safe, size-capped)
+
+    Identical files (same real path or same content) are included once.
     Each file is scanned for prompt injection patterns before inclusion.
     Cached for ~10s; the cache key is cwd so changing directories invalidates.
     """
@@ -114,41 +290,39 @@ def get_claude_md() -> str:
         if _claude_md_cache is not None and _claude_md_cache[1] == cwd and _claude_md_cache[0] > now:
             return _claude_md_cache[2]
 
-    content_parts = []
-    warnings = []
+    content_parts: list = []
+    warnings: list = []
+    seen_real: set = set()
+    seen_hash: set = set()
+    budget = [_INSTRUCTIONS_TOTAL_MAX_CHARS]
 
-    # Global CLAUDE.md
-    global_md = Path.home() / ".claude" / "CLAUDE.md"
-    if global_md.exists():
+    home = Path.home()
+    user_files = (
+        (home / ".claude" / "CLAUDE.md", "Global CLAUDE.md"),
+        (home / ".cheetahclaws" / "AGENTS.md", "Global AGENTS.md"),
+    )
+    for path, label in user_files:
         try:
-            text = global_md.read_text()
-            threat = _scan_for_threats(text, f"Global CLAUDE.md ({global_md})")
-            if threat:
-                warnings.append(threat)
-            else:
-                content_parts.append(f"[Global CLAUDE.md]\n{text}")
+            if path.exists():
+                _collect_instruction_file(path, label, seen_real, seen_hash,
+                                          content_parts, warnings, budget)
         except Exception:
             pass
 
-    # Project CLAUDE.md (walk up from cwd)
-    p = Path.cwd()
-    for _ in range(10):
-        candidate = p / "CLAUDE.md"
-        if candidate.exists():
+    try:
+        project_dirs = _project_instruction_dirs(Path(cwd))
+    except Exception:
+        project_dirs = []
+    for d in project_dirs:
+        for rel, name in _PROJECT_INSTRUCTION_FILES:
+            candidate = d / rel
             try:
-                text = candidate.read_text()
-                threat = _scan_for_threats(text, f"Project CLAUDE.md ({candidate})")
-                if threat:
-                    warnings.append(threat)
-                else:
-                    content_parts.append(f"[Project CLAUDE.md: {candidate}]\n{text}")
+                if candidate.exists():
+                    _collect_instruction_file(
+                        candidate, f"Project {name}: {candidate}", seen_real,
+                        seen_hash, content_parts, warnings, budget)
             except Exception:
                 pass
-            break
-        parent = p.parent
-        if parent == p:
-            break
-        p = parent
 
     # Print warnings to stderr so user sees them
     if warnings:

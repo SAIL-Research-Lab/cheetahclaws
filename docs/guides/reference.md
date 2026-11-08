@@ -4,10 +4,22 @@
 
 ```
 cheetahclaws [OPTIONS] [PROMPT]
+cheetahclaws exec [OPTIONS] PROMPT|-   # headless, same as -p (see headless.md)
+cheetahclaws replay [ID|last] [--json|--full|--list]
+cheetahclaws trust [DIR | list | revoke [DIR]]
 # or: python -m cheetahclaws [OPTIONS] [PROMPT]
 
 Options:
-  -p, --print          Non-interactive: run prompt and exit
+  -p, --print          Headless: run prompt (args and/or stdin) and exit;
+                       only the result goes to stdout
+  --output-format F    text | json | stream-json (headless)
+  --max-turns N        Stop after N model turns (exit code 2)
+  --permission-mode M  auto | accept-edits | accept-all | manual | plan
+  --allowed-tools R    e.g. "Read,Edit,Bash(pytest:*)" (headless)
+  --disallowed-tools R e.g. "WebFetch,Bash(rm:*)"
+  --resume ID / --continue   Continue a saved session (headless)
+  --trust-workspace    Load this checkout's project MCP/plugins/hooks for
+                       this run only (headless)
   -m, --model MODEL    Override model (e.g. gpt-4o, ollama/llama3.3)
   --accept-all         Auto-approve all operations (no permission prompts)
   --auto, --yolo       Autonomous: carry the whole task through without any
@@ -418,7 +430,7 @@ When prompting is enabled, the prompt is reserved for actions that can **change 
 | Mode | Behavior |
 |---|---|
 | `auto` (default) | Every read-only tool and every read-only shell pipeline runs automatically, as does creating a new file inside the workspace; prompts before overwriting/editing files, running arbitrary commands, and spawning sub-agents. |
-| `accept-edits` | Like `auto`, but also auto-runs file edits (`Write`/`Edit`/`NotebookEdit`); other (non-allow-listed) Bash still prompts. The middle ground between `auto` and `accept-all`. |
+| `accept-edits` | Like `auto`, but also auto-runs file edits (`Write`/`Edit`/`MultiEdit`/`ApplyPatch`/`NotebookEdit`) to ordinary files inside the workspace (config/hook locations and paths outside still ask); other (non-allow-listed) Bash still prompts. The middle ground between `auto` and `accept-all`. |
 | `accept-all` | Never prompts; all operations proceed automatically. |
 | `manual` | Prompts before every single operation, including reads. |
 | `plan` | Read-only analysis mode: reads + safe Bash run, all writes are refused except the plan file. Entered via `/plan <desc>` or the `EnterPlanMode` tool. |
@@ -433,7 +445,7 @@ A **hard denylist** (`rm -rf /`, `mkfs`, `dd` to a raw disk device, `chmod -R 77
 
 - `y` — approve this one action
 - `n` or Enter — deny
-- `s` — approve **and stop asking for this one thing** for the rest of the session
+- `s` — approve **and stop asking for this one thing** for the rest of the session (a chained command is covered only if every segment is read-only or granted; an `ApplyPatch` grant covers exactly the same set of files)
 - `!` — the same grant, **saved**: this one command/file is never asked about again, in this session or any future one
 - `a` — approve and switch to `accept-all` for the rest of the session
 - `auto` — approve and switch to **autonomous mode**, saved across restarts

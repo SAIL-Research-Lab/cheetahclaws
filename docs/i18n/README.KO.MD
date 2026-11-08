@@ -3,8 +3,8 @@
 <br>  
 
 <div align="center">
-  <a href="[https://github.com/SafeRL-Lab/Robust-Gymnasium](https://github.com/SafeRL-Lab/cheetahclaws)">
-    <img src="https://raw.githubusercontent.com/SafeRL-Lab/cheetahclaws/main/docs/media/logos/logo-5.png" alt="Logo" width="280"> 
+  <a href="[https://github.com/SafeRL-Lab/Robust-Gymnasium](https://github.com/SAIL-Research-Lab/cheetahclaws)">
+    <img src="https://raw.githubusercontent.com/SAIL-Research-Lab/cheetahclaws/main/docs/media/logos/logo-5.png" alt="Logo" width="280"> 
   </a>
 
   
@@ -14,7 +14,7 @@
     ·
     <a href="https://arxiv.org/pdf/2605.26112">하네스 스케일링</a>
     ·
-    <a href="https://github.com/SafeRL-Lab/cheetahclaws/issues">이슈</a>
+    <a href="https://github.com/SAIL-Research-Lab/cheetahclaws/issues">이슈</a>
     ·
     <a href="https://pypi.org/project/cheetahclaws/">
       <img src="https://img.shields.io/badge/downloads-9.6K-blue" alt="Downloads 9.6K" align="absmiddle">
@@ -61,7 +61,7 @@ cheetahclaws        # start chatting!
 
 <div align="center">
   <a href="https://www.atlascloud.ai/">
-    <img src="https://github.com/SafeRL-Lab/cheetahclaws/blob/main/docs/sponsors/atlas_cloud/ATLAS_CLOUD_LOGO_BLACK.svg" alt="Atlas Cloud" width="180"> 
+    <img src="https://github.com/SAIL-Research-Lab/cheetahclaws/blob/main/docs/sponsors/atlas_cloud/ATLAS_CLOUD_LOGO_BLACK.svg" alt="Atlas Cloud" width="180"> 
   </a>
 </div>
 
@@ -91,25 +91,25 @@ CheetahClaws: **빠르고** **사용하기 쉬운** Python 네이티브 에이�
 ### 데모
 
 <div align=center>
-<img src="https://raw.githubusercontent.com/SafeRL-Lab/cheetahclaws/main/docs/media/demos/demo.gif" width="850"/>
+<img src="https://raw.githubusercontent.com/SAIL-Research-Lab/cheetahclaws/main/docs/media/demos/demo.gif" width="850"/>
 </div>
 <div align=center><sub><i>터미널에서의 작업 실행</i></sub></div>
 
 <br/>
 
 <div align=center>
-<img src="https://raw.githubusercontent.com/SafeRL-Lab/cheetahclaws/main/docs/media/demos/web_demo.gif" width="850"/>
+<img src="https://raw.githubusercontent.com/SAIL-Research-Lab/cheetahclaws/main/docs/media/demos/web_demo.gif" width="850"/>
 </div>
 <div align=center><sub><i>웹 UI: 브라우저 채팅 — 사이드바, 도구 카드, 승인 프롬프트, Markdown 스트리밍</i></sub></div>
 
 <br/>
 
 <div align=center>
-<img src="https://raw.githubusercontent.com/SafeRL-Lab/cheetahclaws/main/docs/media/demos/trading_demo.gif" width="850"/>
+<img src="https://raw.githubusercontent.com/SAIL-Research-Lab/cheetahclaws/main/docs/media/demos/trading_demo.gif" width="850"/>
 </div>
 <div align=center><sub><i>자율 트레이딩 에이전트</i></sub></div>
 
-> 더 많은 애니메이션 데모(코드 리뷰, `/research`, `/brainstorm`, `/lab`, Telegram/WeChat/Slack 브리지)는 [`docs/media/`](https://github.com/SafeRL-Lab/cheetahclaws/tree/main/docs/media/)에 있습니다.
+> 더 많은 애니메이션 데모(코드 리뷰, `/research`, `/brainstorm`, `/lab`, Telegram/WeChat/Slack 브리지)는 [`docs/media/`](https://github.com/SAIL-Research-Lab/cheetahclaws/tree/main/docs/media/)에 있습니다.
 
 ---
 
@@ -247,7 +247,7 @@ pip install cheetahclaws
 ### 대안: 원라인 설치 스크립트
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/SafeRL-Lab/cheetahclaws/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/SAIL-Research-Lab/cheetahclaws/main/scripts/install.sh | bash
 ```
 
 설치 후 `cheetahclaws`가 PATH에 등록되도록 셸을 다시 로드하세요:
@@ -261,7 +261,7 @@ cheetahclaws        # start chatting!
 ### 대안: 소스 코드에서 `pip`으로 설치
 
 ```bash
-git clone https://github.com/SafeRL-Lab/cheetahclaws.git
+git clone https://github.com/SAIL-Research-Lab/cheetahclaws.git
 cd cheetahclaws
 pip install .                       # then: cheetahclaws
 git pull && pip install --force-reinstall .   # to update
@@ -285,7 +285,7 @@ pip install ".[all]"        # everything above
 ### 대안: `uv`로 설치
 
 ```bash
-git clone https://github.com/SafeRL-Lab/cheetahclaws.git && cd cheetahclaws
+git clone https://github.com/SAIL-Research-Lab/cheetahclaws.git && cd cheetahclaws
 uv tool install ".[all]"            # minimal: uv tool install .
 uv tool install ".[all]" --reinstall   # update   ·   uv tool uninstall cheetahclaws
 ```
@@ -293,7 +293,7 @@ uv tool install ".[all]" --reinstall   # update   ·   uv tool uninstall cheetah
 ### 대안: 소스에서 직접 실행 (설치 불필요)
 
 ```bash
-git clone https://github.com/SafeRL-Lab/cheetahclaws.git && cd cheetahclaws
+git clone https://github.com/SAIL-Research-Lab/cheetahclaws.git && cd cheetahclaws
 pip install -r requirements.txt
 python cheetahclaws.py              # changes take effect immediately
 ```
@@ -477,7 +477,7 @@ cheetahclaws --web --port 8008 --no-auth              # browser chat + terminal
 기여를 환영합니다! 아키텍처, 컨벤션, PR 체크리스트는 [기여 가이드](../../CONTRIBUTING.md)를 참고하세요.
 
 ```bash
-git clone https://github.com/SafeRL-Lab/cheetahclaws.git && cd cheetahclaws
+git clone https://github.com/SAIL-Research-Lab/cheetahclaws.git && cd cheetahclaws
 pip install -r requirements.txt && pip install pytest
 python -m pytest tests/ -x -q       # 341+ tests should pass
 python cheetahclaws.py              # run the REPL

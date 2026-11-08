@@ -3,8 +3,8 @@ English | [中文](docs/i18n/README.CN.MD) | [한국어](docs/i18n/README.KO.MD)
 <br>  
 
 <div align="center">
-  <a href="[https://github.com/SafeRL-Lab/Robust-Gymnasium](https://github.com/SafeRL-Lab/cheetahclaws)">
-    <img src="https://raw.githubusercontent.com/SafeRL-Lab/cheetahclaws/main/docs/media/logos/logo-5.png" alt="Logo" width="280"> 
+  <a href="[https://github.com/SafeRL-Lab/Robust-Gymnasium](https://github.com/SAIL-Research-Lab/cheetahclaws)">
+    <img src="https://raw.githubusercontent.com/SAIL-Research-Lab/cheetahclaws/main/docs/media/logos/logo-5.png" alt="Logo" width="280"> 
   </a>
 
   
@@ -14,7 +14,7 @@ English | [中文](docs/i18n/README.CN.MD) | [한국어](docs/i18n/README.KO.MD)
     ·
     <a href="https://arxiv.org/pdf/2605.26112">Scaling the Harness</a>
     ·
-    <a href="https://github.com/SafeRL-Lab/cheetahclaws/issues">Issue</a>
+    <a href="https://github.com/SAIL-Research-Lab/cheetahclaws/issues">Issue</a>
     ·
     <a href="https://pypi.org/project/cheetahclaws/">
       <img src="https://img.shields.io/badge/downloads-16.6K-blue" alt="Downloads 16.6K" align="absmiddle">
@@ -41,6 +41,7 @@ Other install methods: [one-line install script](#alternative-one-line-install-s
 
 ## 🔥🔥🔥 News (Pacific Time)
 
+- October 31, 2026 (**v3.5.90**): **Safe to open any repo, edits that can't corrupt a file, and a real headless mode.** **(1) Security.** A project's `.mcp.json` servers, plugins and hooks no longer run on open — the REPL asks once, or run `/trust` ([security guide](docs/guides/security.md#v3590-hardening--what-changed-and-how-to-opt-out)). Bridges check every sender against `<bridge>_allowed_users` before `!cmd`, slash commands or agent runs. The web UI refuses cross-origin requests and WebSockets, `--no-auth` needs a per-launch URL token (the desktop app passes it), and registration closes after the first admin. An "always allow" for `git status` no longer covers `git status && curl … | sh`, and known read-only-classifier bypasses are closed (`git -c core.fsmonitor=`, `rg --pre`, `sed e`, `$KEY` in `curl`). Ctrl-C kills the whole process group; `bash_sandbox` runs Bash under bubblewrap / sandbox-exec (opt-in). `WebFetch` refuses LAN and cloud-metadata addresses (a direct `localhost` fetch still works for dev servers). `config.json` and `mcp.json` are written 0600. **(2) Editing.** Edits require a fresh Read, so a file changed on disk is never clobbered. New `MultiEdit` and Codex-style `ApplyPatch` tools apply all-or-nothing, with atomic writes. Non-UTF-8 files and line endings are preserved. The approval prompt shows a diff. **(3) Automation.** `cheetahclaws exec` / `-p` reads stdin and emits `--output-format json|stream-json`; it also takes `--max-turns` and `--allowed-tools "Bash(pytest:*)"`. Every session writes an event log you can `cheetahclaws replay`. Claude-Code-compatible [hooks](docs/guides/hooks.md) are available, plus a [GitHub Action](docs/guides/github-action.md). **(4) Agent quality.** Tool output scales with the model's context (40K chars at 200K, not a flat 7K) and keeps the tail of logs. Extended thinking + tools and `/image` work on Claude. Sub-agents can edit (inherit the parent's policy) and keep their committed branches. Compaction summarises a structured transcript using real token usage. AGENTS.md, CLAUDE.local.md, every directory level and `@imports` are loaded. [Details](docs/news.md).
 - October 30, 2026 (**v3.5.89.1**): **Runcrate provider, Serply Scholar research source, and a parser that never pays twice.** **(1)** [Runcrate](https://www.runcrate.ai) is a new provider: open models (DeepSeek, GLM, Qwen, Kimi, gpt-oss) behind one OpenAI-compatible key — `RUNCRATE_API_KEY` or `/config runcrate_api_key=...`, then `--model runcrate/<vendor>/<model>` (PR #193 by [@heydryft](https://github.com/heydryft); [setup](docs/guides/usage.md#runcrate-open-models-one-key)). **(2)** `/research` gains a 21st source, **Serply Scholar**: Google Scholar citation counts through the Serply API instead of scraping, ~1-2s per query, enabled by `SERPLY_API_KEY` and honoring `--range`/`--since`/`--until` via Scholar's year filter (PR #191 by [@googio](https://github.com/googio)). **(3)** The Serply parser now tolerates unexpected field types (integer citation counts, `null` or non-object authors/extras) instead of raising `TypeError`, which the aggregator had read as an old-style source and retried — spending a second API request. Regression test added.
 - October 11, 2026 (**v3.5.89**): **Skills that return an answer, custom endpoints that are asked once, and a Requesty provider.** **(1)** The `Skill` tool no longer crashes with `replace() argument 2 must be str, not dict` when a model passes `args` as an object, `null` or a list: unambiguous shapes are accepted, and anything else gets an error that names the expected shape (#182, PR #186 by [@linhongyu510](https://github.com/linhongyu510)). **(2)** `Skill` returns the nested run's **final answer only**. It used to return the whole transcript, including the model's reasoning and status lines (#184). **(3)** A `custom/` endpoint's `/v1/models` is queried **once per process** instead of before every model and tool call (141–235 requests down to 1–2 in a 47-turn session), and each model on a multi-model endpoint now gets its own context window (#183). **(4)** The per-tool-result size cap now follows `/config context_window` and the endpoint's per-model limit. **(5)** New built-in provider: [Requesty](https://www.requesty.ai), `requesty/<model>` with `REQUESTY_API_KEY` (PR #185 by [@Thibaultjaigu](https://github.com/Thibaultjaigu)). **(6)** `Grep` works on machines without ripgrep; the `grep` fallback had been returning "No matches found" for every search. Issues reported by [@master5d](https://github.com/master5d). 68 new tests. [Details](docs/news.md)
 - September 20, 2026 (**v3.5.88**): **Autonomous by default, `/resume` by name, and transcripts you can read.** **(1)** A request now becomes a *result*: `auto_approve` ships as `True`, so a turn that needs six commands runs them instead of stopping six times at an approval menu. `/auto off` turns the prompts back on and is saved; `--ask` does it for one run. The Bash hard denylist, the filesystem sandbox and the `manual`/`plan` modes still override autonomy, and the banner calls out the non-default state. At a prompt, **`!`** now saves a grant for one command/file permanently and **`auto`** switches to autonomous mode. **(2)** `save_config` used to persist every key including the defaults, which froze them into `config.json` and meant a default changed in a later release could never reach an existing user; it now writes only what differs, with a one-time migration that cleans up what is already on disk. **(3)** **`/resume` lists sessions by name** — each row is the session's opening request plus date, turn count, model and id, newest first with the live session pinned on top — and resuming **repaints the conversation** rather than printing a file path. `/resume last|<id>|<path>` skip the picker. **(4)** Sessions are saved as **UTF-8, not `\uXXXX`**, so a Chinese message is stored as Chinese — readable and greppable. **(5)** A Markdown `---` in the model's answer is no longer painted as a full-width rule mid-turn (`markdown_rules=true` restores it), with setext headings, table rows, lists and fenced code left alone. [Details](docs/news.md)
@@ -64,7 +65,7 @@ For more news, see [here](docs/news.md).
 
 <div align="center">
   <a href="https://www.atlascloud.ai/">
-    <img src="https://github.com/SafeRL-Lab/cheetahclaws/blob/main/docs/sponsors/atlas_cloud/ATLAS_CLOUD_LOGO_BLACK.svg" alt="Atlas Cloud" width="180"> 
+    <img src="https://github.com/SAIL-Research-Lab/cheetahclaws/blob/main/docs/sponsors/atlas_cloud/ATLAS_CLOUD_LOGO_BLACK.svg" alt="Atlas Cloud" width="180"> 
   </a>
 </div>
 
@@ -94,25 +95,25 @@ CheetahClaws: **A Fast** and **Easy-to-Use** Python native Agent Harness Infrast
 ### Demos
 
 <div align=center>
-<img src="https://raw.githubusercontent.com/SafeRL-Lab/cheetahclaws/main/docs/media/demos/demo.gif" width="850"/>
+<img src="https://raw.githubusercontent.com/SAIL-Research-Lab/cheetahclaws/main/docs/media/demos/demo.gif" width="850"/>
 </div>
 <div align=center><sub><i>Task execution in the terminal</i></sub></div>
 
 <br/>
 
 <div align=center>
-<img src="https://raw.githubusercontent.com/SafeRL-Lab/cheetahclaws/main/docs/media/demos/web_demo.gif" width="850"/>
+<img src="https://raw.githubusercontent.com/SAIL-Research-Lab/cheetahclaws/main/docs/media/demos/web_demo.gif" width="850"/>
 </div>
 <div align=center><sub><i>Web UI: browser chat — sidebar, tool cards, approval prompts, Markdown streaming</i></sub></div>
 
 <br/>
 
 <div align=center>
-<img src="https://raw.githubusercontent.com/SafeRL-Lab/cheetahclaws/main/docs/media/demos/trading_demo.gif" width="850"/>
+<img src="https://raw.githubusercontent.com/SAIL-Research-Lab/cheetahclaws/main/docs/media/demos/trading_demo.gif" width="850"/>
 </div>
 <div align=center><sub><i>Autonomous trading agent</i></sub></div>
 
-> More animated demos (code review, `/research`, `/brainstorm`, `/lab`, Telegram/WeChat/Slack bridges) live in [`docs/media/`](https://github.com/SafeRL-Lab/cheetahclaws/tree/main/docs/media/).
+> More animated demos (code review, `/research`, `/brainstorm`, `/lab`, Telegram/WeChat/Slack bridges) live in [`docs/media/`](https://github.com/SAIL-Research-Lab/cheetahclaws/tree/main/docs/media/).
 
 ---
 
@@ -252,7 +253,7 @@ Works on **Linux, macOS, WSL2, and Android (Termux)** (Python 3.10+). First run 
 ### Alternative: one-line install script
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/SafeRL-Lab/cheetahclaws/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/SAIL-Research-Lab/cheetahclaws/main/scripts/install.sh | bash
 ```
 
 After installation, reload your shell so `cheetahclaws` is on PATH:
@@ -266,7 +267,7 @@ cheetahclaws        # start chatting!
 ### Alternative: install with `pip` from source code
 
 ```bash
-git clone https://github.com/SafeRL-Lab/cheetahclaws.git
+git clone https://github.com/SAIL-Research-Lab/cheetahclaws.git
 cd cheetahclaws
 pip install .                       # then: cheetahclaws
 git pull && pip install --force-reinstall .   # to update
@@ -291,7 +292,7 @@ pip install ".[all]"        # everything above
 ### Alternative: install with `uv`
 
 ```bash
-git clone https://github.com/SafeRL-Lab/cheetahclaws.git && cd cheetahclaws
+git clone https://github.com/SAIL-Research-Lab/cheetahclaws.git && cd cheetahclaws
 uv tool install ".[all]"            # minimal: uv tool install .
 uv tool install ".[all]" --reinstall   # update   ·   uv tool uninstall cheetahclaws
 ```
@@ -299,7 +300,7 @@ uv tool install ".[all]" --reinstall   # update   ·   uv tool uninstall cheetah
 ### Alternative: run directly from source (no install)
 
 ```bash
-git clone https://github.com/SafeRL-Lab/cheetahclaws.git && cd cheetahclaws
+git clone https://github.com/SAIL-Research-Lab/cheetahclaws.git && cd cheetahclaws
 pip install -r requirements.txt
 python cheetahclaws.py              # changes take effect immediately
 ```
@@ -467,7 +468,10 @@ Detailed guides live in [`docs/guides/`](docs/guides/) to keep this README focus
 | [**Reference**](docs/guides/reference.md) | CLI, 50+ commands, 33 built-in tools, session search, error classification, tool cache |
 | [**Extensions**](docs/guides/extensions.md) | Memory, Skills, Sub-Agents, MCP servers, Plugins, Monitor, Autonomous Agents |
 | [**Bridges**](docs/guides/bridges.md) | Telegram, WeChat, Slack, QQ setup + remote control from your phone |
-| [**Security & env vars**](docs/guides/security.md) | Threat model, `CHEETAHCLAWS_*` vars, bot-token handling, Bash denylist, fs sandbox, CSRF |
+| [**Headless / CI**](docs/guides/headless.md) | `cheetahclaws exec` / `-p`: stdin input, `--output-format json\|stream-json`, `--max-turns`, allowed/disallowed tool rules, exit codes, `replay` of the per-session event log |
+| [**Hooks**](docs/guides/hooks.md) | PreToolUse / PostToolUse / UserPromptSubmit / Stop / SessionStart / … shell or Python hooks; block, rewrite input, add context |
+| [**GitHub Action**](docs/guides/github-action.md) | `action.yml` — run cheetahclaws in a workflow (PR review example) |
+| [**Security & env vars**](docs/guides/security.md) | Threat model, workspace trust (`/trust`), bridge sender allowlists, Bash grants + opt-in sandbox, WebFetch SSRF guard, web origin checks, `CHEETAHCLAWS_*` vars |
 | [**Voice & Video**](docs/guides/voice-and-video.md) | Offline Whisper voice input, Video factory, TTS factory |
 | [**Trading**](docs/guides/trading.md) | Multi-agent analysis, backtesting, BM25 memory, data fallbacks, SSJ integration |
 | [**Advanced**](docs/guides/advanced.md) | Brainstorm, SSJ, Tmux, proactive monitoring, checkpoints, plan mode, sessions, cloud sync |
@@ -520,7 +524,7 @@ See the [Reference Guide](docs/guides/reference.md) for all 50+ slash commands, 
 We welcome contributions! See the [Contributing Guide](CONTRIBUTING.md) for architecture, conventions, and the PR checklist.
 
 ```bash
-git clone https://github.com/SafeRL-Lab/cheetahclaws.git && cd cheetahclaws
+git clone https://github.com/SAIL-Research-Lab/cheetahclaws.git && cd cheetahclaws
 pip install -r requirements.txt && pip install pytest
 python -m pytest tests/ -x -q       # 341+ tests should pass
 python cheetahclaws.py              # run the REPL

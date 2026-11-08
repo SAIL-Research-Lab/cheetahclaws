@@ -28,7 +28,7 @@ import urllib.parse
 import urllib.request
 from typing import Optional
 
-DEFAULT_UA = "CheetahClaws-Research/1.0 (+https://github.com/SafeRL-Lab/cheetahclaws)"
+DEFAULT_UA = "CheetahClaws-Research/1.0 (+https://github.com/SAIL-Research-Lab/cheetahclaws)"
 DEFAULT_TIMEOUT = 10.0
 DEFAULT_RETRIES = 4   # ↑ from 2 — academic APIs hit 429 routinely
 _BACKOFF_429 = (10.0, 30.0, 60.0, 120.0)

@@ -134,6 +134,11 @@ class TestConfig:
             "mcpServers": {"git": {"command": "new-cmd"}}
         }))
         try:
+            # Untrusted project: its server is skipped, user-level one stays.
+            assert load_mcp_configs()["git"].command == "old-cmd"
+            assert load_mcp_configs(include_untrusted=True)["git"].command == "new-cmd"
+            from cheetahclaws import trust
+            trust.trust(Path.cwd())
             configs = load_mcp_configs()
             assert configs["git"].command == "new-cmd"
         finally:

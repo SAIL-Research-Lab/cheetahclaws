@@ -59,7 +59,7 @@ Return control to the user when:
 
 # Active Tool Surface
 - Profile: `full`
-- Enabled tools: `Agent`, `AskUserQuestion`, `Bash`, `CheckAgentResult`, `Edit`, `EnterPlanMode`, `ExitPlanMode`, `GetDiagnostics`, `Glob`, `Grep`, `ListAgentTasks`, `ListAgentTypes`, `MemoryDelete`, `MemoryList`, `MemorySave`, `MemorySearch`, `MemoryVerify`, `NotebookEdit`, `Read`, `ReadEmail`, `ReadImage`, `ReadPDF`, `ReadSpreadsheet`, `Research`, `SendEmail`, `SendMessage`, `Skill`, `SkillList`, `SleepTimer`, `SummarizeLargeFile`, `TaskCreate`, `TaskGet`, `TaskList`, `TaskUpdate`, `WebBrowse`, `WebFetch`, `WebSearch`, `Write`
+- Enabled tools: `Agent`, `ApplyPatch`, `AskUserQuestion`, `Bash`, `CheckAgentResult`, `Edit`, `EnterPlanMode`, `ExitPlanMode`, `GetDiagnostics`, `Glob`, `Grep`, `ListAgentTasks`, `ListAgentTypes`, `MemoryDelete`, `MemoryList`, `MemorySave`, `MemorySearch`, `MemoryVerify`, `MultiEdit`, `NotebookEdit`, `Read`, `ReadEmail`, `ReadImage`, `ReadPDF`, `ReadSpreadsheet`, `Research`, `SendEmail`, `SendMessage`, `Skill`, `SkillList`, `SleepTimer`, `SummarizeLargeFile`, `TaskCreate`, `TaskGet`, `TaskList`, `TaskUpdate`, `WebBrowse`, `WebFetch`, `WebSearch`, `Write`
 - Call only the enabled tools above; a tool mentioned elsewhere is not available unless it appears in this list.
 - For complex or multi-file work, use `EnterPlanMode` before making changes, then finish with `ExitPlanMode`.
 
@@ -125,6 +125,7 @@ These commands the **user** can invoke at the REPL prompt — they are NOT tools
 - `/thinking` — Toggle extended thinking
 - `/trade` — Alias for /trading
 - `/trading` `[analyze | review | verify | price | indicators | discover | rank | factors | anomaly | monitor | paper | calibration | watch | scan | manage | optimize | ml | backtest | walkforward | status | history | memory]` — AI trading agent — analyze, discover (auto-find candidates from insider clusters / earnings beats / sector rotation / factors), rank, anomaly detection, market monitor with bridge alerts, paper-trade tracker, calibration, position review, managed portfolios ($X→1-week PnL), MV optimization, ML stacker, alt-data (insider / sentiment / trends), walk-forward backtest
+- `/trust` `[list | revoke]` — Trust this project (load its .mcp.json / plugins)
 - `/verbose` — Toggle verbose output
 - `/video` `[status | niches]` — AI video factory: story→voice→images→mp4
 - `/web` `[status | --no-auth | --host]` — Start the web terminal / chat UI in background

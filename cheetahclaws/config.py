@@ -216,6 +216,22 @@ DEFAULTS = {
     # contacts whose messages you want the bot to draft replies for).
     # Auto-recorded by the wechat bridge on first inbound (see _wx_poll_loop).
     "wechat_self_uid":                     "",
+    # ── Bridge sender allowlists (bridges/auth.py) ─────────────────────────
+    # Only these sender ids may run !shell, slash commands or agent turns via
+    # a bridge. Empty → the first sender in a 1:1 private chat is bound as
+    # owner and saved here. Group members must be added explicitly, e.g.
+    #   /config telegram_allowed_users=["123456789","987654321"]
+    # Escape hatch (old behaviour, anyone who can message the bot):
+    #   /config <bridge>_allow_all_senders=true
+    "telegram_allowed_users":              [],
+    "wechat_allowed_users":                [],
+    "qq_allowed_users":                    [],
+    "slack_allowed_users":                 [],
+    # ── Workspace trust (trust.py) ─────────────────────────────────────────
+    # A project's .mcp.json servers and .cheetahclaws/plugins.json plugins
+    # only run once you `/trust` the project. True restores the old
+    # load-everything behaviour (also: env CHEETAHCLAWS_TRUST_ALL=1).
+    "trust_all_projects":                  False,
 }
 
 
@@ -266,16 +282,73 @@ def _migrate_saved_config(saved: dict) -> dict:
     out["config_version"] = CONFIG_VERSION
     if out != saved:
         try:
-            CONFIG_DIR.mkdir(exist_ok=True)
-            CONFIG_FILE.write_text(json.dumps(out, indent=2, ensure_ascii=False),
-                                   encoding="utf-8")
+            _ensure_private_dir(CONFIG_DIR)
+            _write_private_json(CONFIG_FILE, out)
         except Exception:
             pass
     return out
 
 
+# ── Private file helpers ──────────────────────────────────────────────────
+# config.json holds API keys and bridge tokens. It must never be readable by
+# other local users, not even for the instant between create and chmod, and a
+# crash mid-write must not leave a truncated file behind.
+
+def _ensure_private_dir(path: Path) -> None:
+    """Create ``path`` as 0700; tighten an existing group/world-accessible one."""
+    path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    try:
+        if path.stat().st_mode & 0o077:
+            os.chmod(path, 0o700)
+    except OSError:
+        pass
+
+
+def _write_private_json(path: Path, data: dict) -> None:
+    """Atomically write ``data`` as JSON to ``path`` with mode 0600.
+
+    The temp file is created 0600 by mkstemp (no umask window), then renamed
+    over the target, so the final file is 0600 even if an older build left a
+    0644 one behind.
+    """
+    import tempfile
+    text = json.dumps(data, indent=2, ensure_ascii=False)
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.",
+                               suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+            f.flush()
+            try:
+                os.fsync(f.fileno())
+            except OSError:
+                pass
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+# Config keys that load_config may fill from the environment. A value that
+# came from the environment is never written back to config.json — otherwise
+# exporting ANTHROPIC_API_KEY once would silently persist the secret to disk.
+# To persist a key deliberately, set it with `/config anthropic_api_key=...`
+# to a value different from the env var (or unset the env var first).
+_ENV_SOURCED_KEYS = {
+    "anthropic_api_key":  "ANTHROPIC_API_KEY",
+    "anthropic_endpoint": "ANTHROPIC_ENDPOINT",
+}
+# Runtime-only map {config_key: value_taken_from_env}; the leading underscore
+# keeps it out of config.json (save_config strips "_" keys).
+_ENV_TRACK_KEY = "_env_sourced"
+
+
 def load_config() -> dict:
-    CONFIG_DIR.mkdir(exist_ok=True)
+    _ensure_private_dir(CONFIG_DIR)
     SESSIONS_DIR.mkdir(exist_ok=True)
     cfg = dict(DEFAULTS)
     saved_config: dict = {}
@@ -296,21 +369,67 @@ def load_config() -> dict:
     # Backward-compat: legacy single api_key → anthropic_api_key
     if cfg.get("api_key") and not cfg.get("anthropic_api_key"):
         cfg["anthropic_api_key"] = cfg.pop("api_key")
+    env_sourced: dict = {}
     # Also accept ANTHROPIC_API_KEY env for backward-compat
     if not cfg.get("anthropic_api_key"):
         cfg["anthropic_api_key"] = os.environ.get("ANTHROPIC_API_KEY", "")
+        if cfg["anthropic_api_key"]:
+            env_sourced["anthropic_api_key"] = cfg["anthropic_api_key"]
     # Env var always wins over persisted value so .env changes take effect immediately
     if os.environ.get("ANTHROPIC_ENDPOINT"):
         cfg["anthropic_endpoint"] = os.environ["ANTHROPIC_ENDPOINT"]
+        env_sourced["anthropic_endpoint"] = cfg["anthropic_endpoint"]
     elif not cfg.get("anthropic_endpoint"):
         cfg["anthropic_endpoint"] = "https://api.anthropic.com"
+    cfg[_ENV_TRACK_KEY] = env_sourced
     return cfg
 
 
+def _strip_env_sourced(cfg: dict, data: dict) -> dict:
+    """Drop (or restore the on-disk value of) keys whose value came from env.
+
+    Uses the map load_config recorded, plus the live environment as a
+    fallback for config dicts that were built without load_config.
+    """
+    env_vals: dict = {}
+    for key, var in _ENV_SOURCED_KEYS.items():
+        v = os.environ.get(var)
+        if v:
+            env_vals.setdefault(key, []).append(v)
+    tracked = cfg.get(_ENV_TRACK_KEY)
+    if isinstance(tracked, dict):
+        for key, v in tracked.items():
+            if v:
+                env_vals.setdefault(key, []).append(v)
+    if not env_vals:
+        return data
+    on_disk: dict = {}
+    try:
+        if CONFIG_FILE.exists():
+            loaded = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                on_disk = loaded
+    except Exception:
+        pass
+    out = dict(data)
+    for key, values in env_vals.items():
+        if key in out and out[key] in values:
+            if on_disk.get(key):
+                # The user persisted this key themselves — even if it equals
+                # the env value, deleting it would strand launches that run
+                # without that env var (desktop app, cron).
+                out[key] = on_disk[key]
+            else:
+                out.pop(key, None)
+    return out
+
+
 def save_config(cfg: dict):
-    CONFIG_DIR.mkdir(exist_ok=True)
+    _ensure_private_dir(CONFIG_DIR)
     # Strip internal runtime keys (e.g. _run_query_callback) before saving
     data = {k: v for k, v in cfg.items() if not k.startswith("_")}
+    # Never persist secrets/endpoints that only came from the environment.
+    data = _strip_env_sourced(cfg, data)
     # `accept-all` is a one-time-confirmation escape hatch — it should NEVER
     # outlive the session that set it. Persisting it means a user who once
     # clicked "Accept all" silently keeps that mode on every future launch.
@@ -327,8 +446,7 @@ def save_config(cfg: dict):
     data = {k: v for k, v in data.items()
             if k not in DEFAULTS or v != DEFAULTS[k]}
     data["config_version"] = CONFIG_VERSION
-    CONFIG_FILE.write_text(json.dumps(data, indent=2, ensure_ascii=False),
-                           encoding="utf-8")
+    _write_private_json(CONFIG_FILE, data)
 
 
 def current_provider(cfg: dict) -> str:

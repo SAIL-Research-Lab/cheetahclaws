@@ -47,6 +47,11 @@ services:
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
       OPENAI_API_KEY:    "${OPENAI_API_KEY:-}"
 
+      # Browser origins allowed to call the API cross-origin (comma-separated),
+      # e.g. when a reverse proxy rewrites Host and doesn't send
+      # X-Forwarded-Host. Same-origin access needs nothing here.
+      # CHEETAHCLAWS_WEB_ALLOWED_ORIGINS: "https://claws.example.com"
+
       # Telegram bridge: when both are present, the bridge auto-starts in
       # the same process as the web server.
       # Tokens go into ~/.cheetahclaws/config.json on first run; export

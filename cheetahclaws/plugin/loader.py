@@ -21,6 +21,45 @@ def _plugin_allowlist() -> set[str] | None:
     return {name.strip() for name in raw.split(",") if name.strip()}
 
 
+def _install_dir_confined(entry: PluginEntry) -> bool:
+    """PROJECT plugins must live inside <cwd>/.cheetahclaws/plugins/.
+
+    A project plugins.json is repo content; letting it point install_dir at
+    an arbitrary path would load code from anywhere on disk.
+    """
+    from .store import _project_plugin_dir
+    try:
+        entry.install_dir.resolve().relative_to(_project_plugin_dir().resolve())
+        return True
+    except (ValueError, OSError):
+        return False
+
+
+def _project_plugin_allowed(entry: PluginEntry) -> bool:
+    """Workspace-trust gate for PROJECT-scope plugins (see cheetahclaws/trust.py).
+
+    USER and EXTERNAL plugins were installed/enabled by the user and pass.
+    PROJECT plugins load only if the project is trusted, the entry is
+    approved (unchanged since /trust), and install_dir is confined.
+    """
+    if entry.scope is not PluginScope.PROJECT:
+        return True
+    from cheetahclaws import trust as _trust
+    from .store import _project_plugin_cfg
+    pfile = _project_plugin_cfg()
+    if _trust._is_user_plugins_file(pfile):
+        return True     # cwd == $HOME: the "project" file IS the user file
+    if not _install_dir_confined(entry):
+        print(f"[plugin] Refusing project plugin '{entry.name}': install_dir "
+              f"{entry.install_dir} is outside {pfile.parent / 'plugins'}.",
+              file=sys.stderr, flush=True)
+        return False
+    if _trust.is_plugin_approved(pfile, entry.name, entry.to_dict()):
+        return True
+    _trust.warn_untrusted_once("plugin", _trust.pending_untrusted())
+    return False
+
+
 def load_all_plugins(scope: PluginScope | None = None) -> list[PluginEntry]:
     """Return enabled plugins (optionally filtered by scope).
 
@@ -30,7 +69,7 @@ def load_all_plugins(scope: PluginScope | None = None) -> list[PluginEntry]:
     """
     if _plugins_disabled():
         return []
-    plugins = [p for p in list_plugins(scope) if p.enabled]
+    plugins = [p for p in list_plugins(scope) if p.enabled and _project_plugin_allowed(p)]
     allow = _plugin_allowlist()
     if allow is not None:
         plugins = [p for p in plugins if p.name in allow]
