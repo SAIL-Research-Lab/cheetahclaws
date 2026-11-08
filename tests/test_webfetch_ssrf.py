@@ -53,11 +53,7 @@ def _dns(monkeypatch, table):
 
 
 @pytest.mark.parametrize("url", [
-    "http://127.0.0.1:8080/admin",
-    "http://localhost/",
     "http://169.254.169.254/latest/meta-data/iam/",
-    "http://[::1]/",
-    "http://[::ffff:127.0.0.1]/",
     "http://10.0.0.5/",
     "http://192.168.1.1/",
     "http://100.100.100.200/latest/meta-data/",
@@ -71,6 +67,53 @@ def test_private_destinations_are_refused(monkeypatch, url):
     assert out.startswith("Error: WebFetch refused")
     assert "webfetch_allow_private" in out          # tells the user the way out
     assert calls == []                               # nothing was sent
+
+
+@pytest.mark.parametrize("url", [
+    "http://127.0.0.1:8080/admin",
+    "http://localhost/",
+    "http://[::1]/",
+    "http://[::ffff:127.0.0.1]/",
+])
+def test_loopback_allowed_by_default_but_can_be_disabled(monkeypatch, url):
+    calls = []
+    _fake_httpx(monkeypatch, [_Resp(body=b"dev")], calls)
+    monkeypatch.delenv("CHEETAHCLAWS_WEBFETCH_ALLOW_PRIVATE", raising=False)
+    monkeypatch.delenv("CHEETAHCLAWS_WEBFETCH_ALLOW_LOOPBACK", raising=False)
+    _dns(monkeypatch, {"localhost": ["127.0.0.1", "::1"]})
+    assert _webfetch(url) == "dev"
+    out = _webfetch(url, config={"webfetch_allow_loopback": False})
+    assert out.startswith("Error: WebFetch refused")
+    monkeypatch.setenv("CHEETAHCLAWS_WEBFETCH_ALLOW_LOOPBACK", "0")
+    assert _webfetch(url).startswith("Error: WebFetch refused")
+    assert len(calls) == 1
+
+
+def test_redirect_from_public_into_loopback_is_refused(monkeypatch):
+    calls = []
+    _fake_httpx(monkeypatch, [
+        _Resp(302, "http://127.0.0.1:6379/", url="https://public.example/x"),
+        _Resp(body=b"LOCAL"),
+    ], calls)
+    _dns(monkeypatch, {"public.example": ["93.184.216.34"]})
+    out = _webfetch("https://public.example/x")
+    assert out.startswith("Error: WebFetch refused a redirect")
+    assert calls == ["https://public.example/x"]
+
+
+def test_loopback_may_redirect_within_loopback_only(monkeypatch):
+    calls = []
+    _fake_httpx(monkeypatch, [
+        _Resp(302, "/login", url="http://127.0.0.1:3000/"),
+        _Resp(body=b"page"),
+    ], calls)
+    assert _webfetch("http://127.0.0.1:3000/") == "page"
+    calls.clear()
+    _fake_httpx(monkeypatch, [
+        _Resp(302, "http://10.0.0.5/", url="http://127.0.0.1:3000/"),
+        _Resp(body=b"LAN"),
+    ], calls)
+    assert _webfetch("http://127.0.0.1:3000/").startswith("Error: WebFetch refused")
 
 
 def test_a_name_with_any_private_answer_is_refused(monkeypatch):
@@ -146,8 +189,9 @@ def test_real_async_transport_is_guarded_too():
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
         url = f"http://127.0.0.1:{server.server_port}/"
-        assert _webfetch(url).startswith("Error: WebFetch refused")
-        assert _webfetch(url, config={"webfetch_allow_private": True}) == "hi"
+        off = {"webfetch_allow_loopback": False}
+        assert _webfetch(url, config=off).startswith("Error: WebFetch refused")
+        assert _webfetch(url) == "hi"
     finally:
         server.shutdown()
         server.server_close()

@@ -90,6 +90,10 @@ def add_arguments(parser) -> None:
                    default="continue",
                    help="continue: tell the model and keep going (default); "
                         "stop: end the run at the first denial (exit 2)")
+    g.add_argument("--trust-workspace", action="store_true",
+                   help="Trust this checkout for this run only, so its .mcp.json "
+                        "servers, project plugins and hooks load (nothing is saved). "
+                        "Only for repositories whose contents you control")
     g.add_argument("--no-event-log", action="store_true",
                    help="Do not write ~/.cheetahclaws/sessions/<id>/events.jsonl")
 
@@ -354,11 +358,42 @@ def run(config: dict, args, *, out: Optional[TextIO] = None,
     if stdin is None:
         import io
         _real_stdin, sys.stdin = sys.stdin, io.StringIO("")
+    from cheetahclaws import trust
+    _prev_trust_env = os.environ.get(trust.TRUST_ENV)
+    if getattr(args, "trust_workspace", False):
+        os.environ[trust.TRUST_ENV] = "1"
     try:
         return _run(config, args, prompt, fmt, t0, out, err)
     finally:
         if _real_stdin is not None:
             sys.stdin = _real_stdin
+        if _prev_trust_env is None:
+            os.environ.pop(trust.TRUST_ENV, None)
+        else:
+            os.environ[trust.TRUST_ENV] = _prev_trust_env
+
+
+def _skipped_untrusted() -> list[dict]:
+    """Project MCP servers / plugins / hooks this run will NOT load.
+
+    Headless runs never prompt for workspace trust, so anything skipped is
+    reported up front (stderr) and in the result record instead of the
+    tools silently not being there.
+    """
+    try:
+        from cheetahclaws import trust
+        return [{k: it.get(k) for k in ("kind", "name", "file", "reason")}
+                for it in trust.pending_untrusted()]
+    except Exception:
+        return []
+
+
+def _skipped_notice(items: list[dict]) -> str:
+    names = ", ".join(f"{i['kind']}:{i['name']}" for i in items)
+    return (f"[cheetahclaws] Workspace not trusted — skipped {len(items)} project "
+            f"item(s): {names}. Headless runs never prompt; pass --trust-workspace "
+            f"(this run only), run `cheetahclaws trust` once, or set "
+            f"CHEETAHCLAWS_TRUST_ALL=1.")
 
 
 def _run(config, args, prompt, fmt, t0, out, err) -> int:
@@ -417,10 +452,13 @@ def _run(config, args, prompt, fmt, t0, out, err) -> int:
     stop_on_denial = getattr(args, "on_permission_denied", "continue") == "stop"
     denials: list[dict] = []
 
+    skipped = _skipped_untrusted()
+    if skipped:
+        print(_skipped_notice(skipped), file=err, flush=True)
     emitter.emit("session_start", model=config.get("model", ""), cwd=os.getcwd(),
                  permission_mode=config.get("permission_mode", "auto"),
                  mode="headless", resumed=resumed, version=_version(),
-                 max_turns=config.get("max_turns"))
+                 max_turns=config.get("max_turns"), skipped_untrusted=skipped)
     try:
         hooks.session_start(config, source="resume" if resumed else "startup")
     except Exception:
@@ -489,6 +527,7 @@ def _run(config, args, prompt, fmt, t0, out, err) -> int:
         duration_ms=int((time.monotonic() - t0) * 1000),
         model=config.get("model", ""),
         permission_denials=denials,
+        skipped_untrusted=skipped,
     )
     if error_message:
         result_fields["error"] = error_message

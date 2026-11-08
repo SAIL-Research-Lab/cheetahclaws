@@ -46,6 +46,45 @@ def test_edit_requires_prior_read(tmp_path):
     assert out.startswith("Changes applied"), out
 
 
+def test_refusal_shows_small_file_so_retry_needs_no_read(tmp_path):
+    f = tmp_path / "a.py"
+    f.write_text("x = 1\ny = 2\n")
+    out = run("Edit", file_path=str(f), old_string="x = 1", new_string="x = 2")
+    assert "was not applied" in out and "redo the change" in out
+    assert "x = 1" in out and "y = 2" in out
+    assert f.read_text() == "x = 1\ny = 2\n"            # refused edit never applied
+    assert run("Edit", file_path=str(f), old_string="x = 1",
+               new_string="x = 2").startswith("Changes applied")
+
+
+def test_refusal_on_stale_file_shows_new_contents(tmp_path):
+    f = tmp_path / "a.py"
+    f.write_text("x = 1\n")
+    run("Read", file_path=str(f))
+    f.write_text("x = 1\nz = 3\n")
+    os.utime(f, ns=(1, 1))
+    out = run("Edit", file_path=str(f), old_string="x = 1", new_string="x = 9")
+    assert "modified on disk" in out and "z = 3" in out
+    assert run("Edit", file_path=str(f), old_string="x = 1",
+               new_string="x = 9").startswith("Changes applied")
+
+
+def test_refusal_for_large_file_or_opt_out_only_gives_read_call(tmp_path):
+    big = tmp_path / "big.py"
+    big.write_text("head = 1\n" + "a = 0\n" * 10_000)
+    out = run("Edit", file_path=str(big), old_string="head = 1", new_string="h")
+    assert "Call Read(file_path=" in out and "a = 0" not in out
+    assert "has not been read" in run("Edit", file_path=str(big),
+                                      old_string="head = 1", new_string="h")
+    small = tmp_path / "s.py"
+    small.write_text("q = 1\n")
+    out = run("Edit", _cfg(edit_refusal_show_file=False), file_path=str(small),
+              old_string="q = 1", new_string="q = 2")
+    assert "Call Read(file_path=" in out and "redo the change against" not in out
+    assert "has not been read" in run("Edit", _cfg(edit_refusal_show_file=False),
+                                      file_path=str(small), old_string="q = 1", new_string="q = 2")
+
+
 def test_stale_file_is_refused_until_reread(tmp_path):
     f = tmp_path / "a.py"
     f.write_text("x = 1\n")

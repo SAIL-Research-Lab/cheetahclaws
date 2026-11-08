@@ -20,7 +20,7 @@ from typing import Optional
 from cheetahclaws.tools.file_state import (
     DecodedText, EncodingError,
     atomic_write_bytes, check_insertable, decode_file_bytes, dominant_newline,
-    encode_text, normalize_newlines, tracker_for_config,
+    encode_text, looks_binary, normalize_newlines, tracker_for_config,
 )
 
 
@@ -671,18 +671,49 @@ def check_fresh(path: Path, config: Optional[dict], data: Optional[bytes] = None
         if not must_have_read:
             return
         raise EditError(
-            f"Error: {path} has not been read in this session. Read it first "
-            "(with the Read tool) before modifying it, so the change is based "
-            "on its current contents."
+            f"Error: {path} has not been read in this session, so this change "
+            "was not applied." + _refusal_view(path, config, data)
         )
     size_info = ""
     if recorded is not None and current is not None and recorded.size != current.size:
         size_info = f" (size {recorded.size} → {current.size} bytes)"
     raise EditError(
         f"Error: {path} has been modified on disk since you last read it"
-        f"{size_info} — by the user, a formatter/linter, or another process. "
-        "Read it again before modifying it; your view of the file is stale."
+        f"{size_info} — by the user, a formatter/linter, or another process — "
+        "so this change was not applied." + _refusal_view(path, config, data)
     )
+
+
+def _refusal_view(path: Path, config: Optional[dict], data: Optional[bytes]) -> str:
+    """Tail of a read-before-edit refusal that gets the model unstuck.
+
+    A small file's current contents are attached (numbered, as Read shows
+    them) and recorded as seen, so the very next attempt — rebuilt from what
+    is shown — goes through without a separate Read round-trip.  Weaker
+    models otherwise loop on the refusal.  The refused edit itself is never
+    applied.  Larger files get the exact Read call to make instead.
+    ``edit_refusal_show_file: false`` keeps the plain instruction.
+    """
+    hint = (f" Call Read(file_path={str(path)!r}) and redo the change based on "
+            "its current contents.")
+    cfg = config or {}
+    limit = cfg.get("edit_refusal_show_file", True)
+    if limit is False or str(limit).strip().lower() in ("0", "false", "no", "off"):
+        return hint
+    max_chars = 20_000 if limit is True else max(0, int(limit))
+    try:
+        if data is None:
+            data = path.read_bytes()
+        if len(data) > max_chars or looks_binary(data):
+            return hint
+        shown = _read(str(path), max_output_chars=max_chars + 4_000)
+        if shown.startswith("Error") or "truncated" in shown[-300:]:
+            return hint
+    except (OSError, ValueError):
+        return hint
+    record_file_state(path, config, data)
+    return (" Its current contents are below (you have now seen them) — redo "
+            "the change against these lines:\n\n" + shown)
 
 
 def record_file_state(path, config: Optional[dict], data: Optional[bytes] = None) -> None:

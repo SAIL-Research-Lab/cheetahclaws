@@ -69,6 +69,7 @@ from the pull request, such as its title or body.
 | `cheetahclaws-version` | latest | A pip specifier, for example `==3.5.90`. |
 | `anthropic-api-key` / `openai-api-key` | — | Or set the provider's usual environment variable in the step `env`, as in the example above. |
 | `fail-on-error` | `true` | Fails the step when the exit code is not 0. |
+| `trust-workspace` | `false` | Loads the checkout's `.mcp.json` servers, project plugins and hooks. Keep it `false` in workflows that run on untrusted code (pull requests from forks, `pull_request_target`). Anything skipped is noted in the step summary and in the result's `skipped_untrusted`. |
 
 ## Outputs
 

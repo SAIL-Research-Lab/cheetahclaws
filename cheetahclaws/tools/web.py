@@ -22,6 +22,12 @@ _DEFAULT_WEB_MAX_SECONDS = 30
 # public addresses.  The IP classification is shared with the kernel Fetch
 # tool (kernel/tools/fetch_tool.py) so the two can't drift apart.
 #
+# Loopback (localhost, 127/8, ::1) is allowed by default when the model asks
+# for it directly — fetching a local dev server is the common case — but a
+# redirect from any non-loopback host into loopback is still refused, so a
+# public page cannot bounce the fetch onto local services.  Turn this off
+# with ``webfetch_allow_loopback: false``.
+#
 # Escape hatches: ``webfetch_allow_private: true`` turns the check off;
 # ``webfetch_allowed_hosts: ["intranet.corp", ".internal.example"]`` exempts
 # exact hosts (or, with a leading dot, a domain and its subdomains).  The
@@ -38,6 +44,16 @@ _ALLOWED_SCHEMES = ("http", "https")
 def _resolve_host_ips(host: str) -> list[str]:
     from cheetahclaws.kernel.tools.fetch_tool import resolve_host_ips
     return resolve_host_ips(host)
+
+
+def _is_loopback_ip(ip_str: str) -> bool:
+    import ipaddress
+    try:
+        ip = ipaddress.ip_address(ip_str.split("%", 1)[0])
+    except ValueError:
+        return False
+    mapped = getattr(ip, "ipv4_mapped", None)
+    return (mapped or ip).is_loopback
 
 
 def _host_allowlisted(host: str, allowed) -> bool:
@@ -63,8 +79,16 @@ def _webfetch_url_guard(config: dict | None) -> Callable[[str], Optional[str]]:
     if allow_private is None:
         allow_private = os.environ.get("CHEETAHCLAWS_WEBFETCH_ALLOW_PRIVATE", "0") == "1"
     allowed_hosts = cfg.get("webfetch_allowed_hosts") or ()
+    allow_loopback = cfg.get("webfetch_allow_loopback")
+    if allow_loopback is None:
+        allow_loopback = os.environ.get("CHEETAHCLAWS_WEBFETCH_ALLOW_LOOPBACK", "1") != "0"
+    # The first hop decides whether loopback is in play: only a fetch that
+    # *starts* on loopback may stay on loopback through its redirects.
+    state = {"first": True, "loopback_chain": False}
 
     def check(url: str) -> Optional[str]:
+        first = state["first"]
+        state["first"] = False
         try:
             parsed = urlparse(url)
         except ValueError as e:
@@ -83,7 +107,18 @@ def _webfetch_url_guard(config: dict | None) -> Callable[[str], Optional[str]]:
         except OSError as e:
             return f"Error: WebFetch could not resolve {host!r}: {e}"
         blocked = [ip for ip in ips if is_private_ip(ip)]
+        all_loopback = bool(ips) and all(_is_loopback_ip(ip) for ip in ips)
+        if all_loopback and allow_loopback and (first or state["loopback_chain"]):
+            state["loopback_chain"] = True
+            return None
+        state["loopback_chain"] = False
         if blocked:
+            if all_loopback and allow_loopback:
+                return (
+                    f"Error: WebFetch refused a redirect to {host!r}: a page on "
+                    f"another host may not redirect onto loopback. Fetch the "
+                    f"local URL directly instead."
+                )
             return (
                 f"Error: WebFetch refused {host!r}: it resolves to the "
                 f"non-public address {blocked[0]} (loopback, private network, "

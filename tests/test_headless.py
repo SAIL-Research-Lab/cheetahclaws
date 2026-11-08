@@ -304,3 +304,22 @@ def test_path_rules_cannot_escape_the_workspace(tmp_path, monkeypatch):
     assert not rule_matches("Edit(*.py)", "Edit", {"file_path": "../outside.py"})
     assert not rule_matches("Write(src/*.py)", "Write", {"file_path": "/etc/passwd"})
     assert rule_matches("Read(/etc/*)", "Read", {"file_path": "/etc/hosts"})
+
+
+def test_untrusted_project_items_are_reported_not_silent(iso, monkeypatch):
+    import os
+    from cheetahclaws import trust
+    monkeypatch.delenv(trust.TRUST_ENV, raising=False)
+    item = {"kind": "mcp", "name": "gh", "file": "/r/.mcp.json", "reason": "untrusted"}
+    monkeypatch.setattr(trust, "pending_untrusted",
+                        lambda path=None: [] if trust.trust_all_enabled({}) else [item])
+    _script(monkeypatch, [_turn("done"), _turn("done")])
+    code, out, err, _ = _run(["hi", "--output-format", "json"])
+    assert code == 0
+    assert json.loads(out)["skipped_untrusted"] == [item]
+    assert "mcp:gh" in err and "--trust-workspace" in err
+
+    code, out, err, _ = _run(["hi", "--output-format", "json", "--trust-workspace"])
+    assert json.loads(out)["skipped_untrusted"] == []
+    assert "--trust-workspace" not in err
+    assert trust.TRUST_ENV not in os.environ        # this run only

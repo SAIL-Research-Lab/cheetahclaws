@@ -26,6 +26,7 @@ rendering, runs the prompt once and exits.
 | `--disallowed-tools RULES` | A bare name (`WebFetch`) removes the tool from the model's tool list. A rule with arguments (`Bash(rm:*)`) denies matching calls even under `accept-all`. |
 | `--resume ID` / `--continue` | Continues a saved session by id, or the most recently saved one. |
 | `--on-permission-denied continue\|stop` | `continue` (default) tells the model the call was denied and lets it carry on. `stop` ends the run at the first denial with exit code 2. |
+| `--trust-workspace` | Trusts the current checkout for this run only (nothing is saved), so its `.mcp.json` servers, project plugins and hooks load. Without it, a run in an untrusted folder prints what it skipped to stderr and lists it in `result.skipped_untrusted`. Use it only for repositories whose contents you control. |
 | `--no-event-log` | Skips writing `events.jsonl` for this run. |
 | `-m/--model`, `--accept-all`, `--auto`/`--yolo`, `--ask`, `--budget`, `--thinking`, `--verbose` | Same as in the REPL. |
 
@@ -71,7 +72,7 @@ monotonically within a session and keeps counting across `--resume`.
 
 | type | fields |
 |---|---|
-| `session_start` | `model`, `cwd`, `permission_mode`, `mode` (`headless`/`repl`), `resumed`, `version`, `max_turns` |
+| `session_start` | `model`, `cwd`, `permission_mode`, `mode` (`headless`/`repl`), `resumed`, `version`, `max_turns`, `skipped_untrusted` (headless: project MCP servers / plugins / hooks not loaded because the folder isn't trusted) |
 | `user_message` | `text` |
 | `assistant_delta` | `text` (streamed tokens; sent to stdout only, not persisted) |
 | `assistant_message` | `text`, `tool_calls: [{id, name}]`, `model` |
@@ -83,7 +84,7 @@ monotonically within a session and keeps counting across `--resume`.
 | `compaction` | `trigger` (`auto` / `overflow`) |
 | `notice` | `text` (max turns reached, budget, hook stop, prompt blocked) |
 | `error` | `message`, `category`, `hint` |
-| `result` | `final_text`, `exit_reason`, `exit_code`, `is_error`, `turns`, `usage{…}`, `cost_usd`, `duration_ms`, `model`, `permission_denials[]`, `error?` |
+| `result` | `final_text`, `exit_reason`, `exit_code`, `is_error`, `turns`, `usage{…}`, `cost_usd`, `duration_ms`, `model`, `permission_denials[]`, `skipped_untrusted[]`, `error?` |
 | `session_end` | `reason` (REPL only) |
 
 Events from sub-agent loops have a `depth` field (1, 2, …).

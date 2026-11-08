@@ -40,7 +40,11 @@ its command: if a `git pull` changes what an entry runs, it is skipped again
 until re-approved. An `.mcp.json` found *above* the repository (e.g.
 `~/.mcp.json`) is approved for this project only; its directory never becomes
 a trusted root for every repo beneath it. User-level
-config (`~/.cheetahclaws/mcp.json`, user plugins) is unaffected. Opt out:
+config (`~/.cheetahclaws/mcp.json`, user plugins) is unaffected. Headless
+runs (`exec` / `-p`) never prompt: anything skipped is printed to stderr and
+listed in the result's `skipped_untrusted` field, and `--trust-workspace`
+(GitHub Action input `trust-workspace: true`) trusts the checkout for that run
+only, without saving anything. Opt out:
 `trust_all_projects: true` or `CHEETAHCLAWS_TRUST_ALL=1`.
 
 **Bridges.** One shared check (`bridges/auth.py`) runs before any `!` shell,
@@ -85,8 +89,14 @@ interrupted commands no longer keep running. Default timeout is 120 s
 | `bash_env_keep` | list of names | Keep these variables even when scrubbing |
 
 **WebFetch.** Every hop, redirects included, must be http(s) and resolve to
-public addresses — no localhost, RFC 1918, link-local, CGNAT, cloud metadata
-(`169.254.169.254`) or IPv4-mapped IPv6 tricks. Opt out per host with
+public addresses — no RFC 1918, link-local, CGNAT, cloud metadata
+(`169.254.169.254`) or IPv4-mapped IPv6 tricks. **Loopback is the exception:**
+asking for `http://localhost:3000/` (or `127.0.0.1`, `::1`) directly works, so
+the agent can check a local dev server, and such a fetch may redirect within
+loopback. A redirect from any other host *into* loopback is still refused, so
+a public page cannot bounce the fetch onto local services. Turn loopback off
+with `webfetch_allow_loopback: false` (or `CHEETAHCLAWS_WEBFETCH_ALLOW_LOOPBACK=0`).
+Opt out of the rest per host with
 `webfetch_allowed_hosts: ["intranet.example.com", ".corp.example"]` or
 globally with `webfetch_allow_private: true`.
 
@@ -103,7 +113,13 @@ command — `.claude/`, `.vscode/`, shell rc files, `.envrc`, `.npmrc`,
 
 **File editing.** `Edit`, `MultiEdit`, `ApplyPatch` and overwriting `Write`
 require the file to have been read in this session and refuse if it changed
-on disk since (`edit_require_read: false` to disable). Writes are atomic
+on disk since (`edit_require_read: false` to disable). The refused change is
+never applied; for a file up to 20K bytes the refusal carries its current,
+numbered contents and counts as the read, so the model's next attempt goes
+through without a separate `Read` round-trip — weaker models otherwise loop on
+the refusal. Larger files get the exact `Read(...)` call to make
+(`edit_refusal_show_file: false` for the plain message, or a number to change
+the size limit). Writes are atomic
 (temp file + `fsync` + rename, mode bits kept), non-UTF-8 files are never
 re-encoded or filled with U+FFFD, and line endings outside the edited region
 are left untouched. The approval prompt shows a dry-run diff first

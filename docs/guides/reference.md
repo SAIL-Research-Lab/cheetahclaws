@@ -18,6 +18,8 @@ Options:
   --allowed-tools R    e.g. "Read,Edit,Bash(pytest:*)" (headless)
   --disallowed-tools R e.g. "WebFetch,Bash(rm:*)"
   --resume ID / --continue   Continue a saved session (headless)
+  --trust-workspace    Load this checkout's project MCP/plugins/hooks for
+                       this run only (headless)
   -m, --model MODEL    Override model (e.g. gpt-4o, ollama/llama3.3)
   --accept-all         Auto-approve all operations (no permission prompts)
   --auto, --yolo       Autonomous: carry the whole task through without any

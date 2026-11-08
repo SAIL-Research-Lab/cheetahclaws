@@ -33,6 +33,10 @@ inputs:
     description: "Directory to run in."
     required: false
     default: "."
+  trust-workspace:
+    description: "Load the checkout's .mcp.json servers, project plugins and hooks (passes --trust-workspace). Leave false for workflows that check out untrusted code, e.g. pull requests from forks. Skipped items are listed in the result's skipped_untrusted field."
+    required: false
+    default: "false"
   python-version:
     description: "Python used to install cheetahclaws."
     required: false
@@ -93,6 +97,7 @@ runs:
         CC_DISALLOWED: ${{ inputs.disallowed-tools }}
         CC_MAX_TURNS: ${{ inputs.max-turns }}
         CC_FAIL: ${{ inputs.fail-on-error }}
+        CC_TRUST: ${{ inputs.trust-workspace }}
         CC_ANTHROPIC_KEY: ${{ inputs.anthropic-api-key }}
         CC_OPENAI_KEY: ${{ inputs.openai-api-key }}
       run: |
@@ -104,6 +109,7 @@ runs:
         if [ -n "$CC_MAX_TURNS" ]; then args+=(--max-turns "$CC_MAX_TURNS"); fi
         if [ -n "$CC_ALLOWED" ]; then args+=(--allowed-tools "$CC_ALLOWED"); fi
         if [ -n "$CC_DISALLOWED" ]; then args+=(--disallowed-tools "$CC_DISALLOWED"); fi
+        if [ "$CC_TRUST" = "true" ]; then args+=(--trust-workspace); fi
         result="$RUNNER_TEMP/cheetahclaws-result.json"
         printf '%s' "$CC_PROMPT" | cheetahclaws "${args[@]}" - > "$result"
         code=$?
@@ -126,6 +132,11 @@ runs:
             f.write(f"exit_reason: `{res.get('exit_reason', 'unknown')}` · "
                     f"turns: {res.get('turns', '?')} · "
                     f"cost: ${res.get('cost_usd') or 0:.4f}\n\n")
+            skipped = res.get("skipped_untrusted") or []
+            if skipped:
+                names = ", ".join(f"{i.get('kind')}:{i.get('name')}" for i in skipped)
+                f.write(f"\n> Skipped untrusted project items: {names} "
+                        "(set `trust-workspace: true` to load them)\n")
             f.write(text + "\n")
         PY
         if [ "$code" -ne 0 ] && [ "$CC_FAIL" = "true" ]; then
