@@ -12,6 +12,7 @@ Supported providers:
   openrouter — OpenRouter (openrouter/deepseek/deepseek-v4-flash, ...)
   requesty   — Requesty (requesty/openai/gpt-4o-mini, requesty/claude-sonnet-4-6, ...)
   runcrate   — Runcrate (runcrate/deepseek-ai/DeepSeek-V4.1-Flash, runcrate/zai-org/GLM-5.3, ...)
+  cloudgpu   — CloudGPU (cloudgpu/deepseek-v4.1-flash, cloudgpu/kimi-k3, cloudgpu/glm-5.2, ...)
   minimax    — MiniMax (MiniMax-Text-01, abab6.5s-chat, ...)
   ollama     — Local Ollama (llama3.3, qwen2.5-coder, ...)
   lmstudio   — Local LM Studio (any loaded model)
@@ -190,6 +191,28 @@ PROVIDERS: dict[str, dict] = {
             "Qwen/Qwen3.8-Flash",
             "moonshotai/Kimi-K2.6",
             "openai/gpt-oss-120b",
+        ],
+    },
+    # CloudGPU: DeepSeek, Kimi, GLM, MiniMax and Qwen models behind one
+    # OpenAI-compatible endpoint. Get a key at https://cloudgpu.app/api/console;
+    # the current model list is at GET https://cloudgpu.app/v1/models.
+    # Model IDs are single-segment, so this is a plain explicit prefix:
+    #   /model cloudgpu/deepseek-v4.1-flash
+    "cloudgpu": {
+        "type":       "openai",
+        "api_key_env": "CLOUDGPU_API_KEY",
+        "base_url":   "https://cloudgpu.app/v1",
+        "context_limit": 128000,
+        "max_completion_tokens": 16384,
+        "models": [
+            "deepseek-v4.1-flash",
+            "deepseek-v4-pro",
+            "kimi-k3",
+            "kimi-k2.6",
+            "glm-5.2",
+            "glm-5.3-flash",
+            "minimax-m3",
+            "qwen3-coder-480b",
         ],
     },
     "minimax": {

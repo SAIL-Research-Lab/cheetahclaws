@@ -215,6 +215,28 @@ IDs have no price entry, so `/cost` records tokens but estimates $0, and the
 context window is the gateway default of 128k (raise it with
 `/config context_window=<N>`).
 
+### CloudGPU
+
+[CloudGPU](https://cloudgpu.app) serves DeepSeek, Kimi, GLM, MiniMax and Qwen
+models behind one OpenAI-compatible endpoint (`https://cloudgpu.app/v1`). Get
+a key at [cloudgpu.app/api/console](https://cloudgpu.app/api/console);
+the current model list is at `GET https://cloudgpu.app/v1/models` and pricing
+is on [cloudgpu.app/api](https://cloudgpu.app/api).
+
+```bash
+export CLOUDGPU_API_KEY=...               # or: /config cloudgpu_api_key=...
+
+cheetahclaws --model cloudgpu/deepseek-v4.1-flash
+cheetahclaws --model cloudgpu/kimi-k3
+cheetahclaws --model cloudgpu/qwen3-coder-480b
+```
+
+CloudGPU model IDs are single-segment, so `cloudgpu/` is a plain explicit
+prefix: `bare_model()` strips it and the rest is sent as the model ID. The
+context window is the provider default of 128k (raise it with
+`/config context_window=<N>`), and IDs without a price entry are recorded by
+`/cost` with a $0 estimate.
+
 ### LiteLLM (AWS Bedrock / Azure / Vertex AI)
 
 Use the `litellm/` prefix when the upstream needs auth that's painful to
