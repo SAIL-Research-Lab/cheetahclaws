@@ -12,6 +12,7 @@ Supported providers:
   openrouter — OpenRouter (openrouter/deepseek/deepseek-v4-flash, ...)
   requesty   — Requesty (requesty/openai/gpt-4o-mini, requesty/claude-sonnet-4-6, ...)
   runcrate   — Runcrate (runcrate/deepseek-ai/DeepSeek-V4.1-Flash, runcrate/zai-org/GLM-5.3, ...)
+  standardcompute: Standard Compute (standardcompute/StandardCompute, standardcompute/z-ai/glm-5.3, ...)
   minimax    — MiniMax (MiniMax-Text-01, abab6.5s-chat, ...)
   ollama     — Local Ollama (llama3.3, qwen2.5-coder, ...)
   lmstudio   — Local LM Studio (any loaded model)
@@ -25,7 +26,7 @@ Model string formats:
   "openrouter/<vendor>/<model>"  multi-level path: the first segment is the
   provider, everything after it is passed through as the upstream model ID
   (e.g. "openrouter/deepseek/deepseek-v4-flash"). Also used by nim/, requesty/,
-  runcrate/ and litellm/.
+  runcrate/, standardcompute/ and litellm/.
   "openrouter/<vendor>/<model>@<provider>[/<quant>]"  optional routing suffix:
   pins the secondary OpenRouter provider (and quantization level) via the
   `provider` request body, keeping the model field a real model ID.
@@ -190,6 +191,31 @@ PROVIDERS: dict[str, dict] = {
             "Qwen/Qwen3.8-Flash",
             "moonshotai/Kimi-K2.6",
             "openai/gpt-oss-120b",
+        ],
+    },
+    # Standard Compute: one OpenAI-compatible key for open and frontier models.
+    # Get a key at https://standardcompute.com/dashboard. The "StandardCompute"
+    # model is routed: each request goes to the cheapest enabled model that can
+    # handle it, with automatic fallback. Pinned model IDs are <vendor>/<model>
+    # paths (full list at GET https://api.stdcmpt.com/v1/models), passed through
+    # verbatim after the first segment:
+    #   /model standardcompute/StandardCompute
+    #   /model standardcompute/z-ai/glm-5.3
+    "standardcompute": {
+        "type":       "openai",
+        "api_key_env": "STANDARDCOMPUTE_API_KEY",
+        "base_url":   "https://api.stdcmpt.com/v1",
+        "context_limit": 128000,
+        "max_completion_tokens": 16384,
+        "models": [
+            "StandardCompute",
+            "deepseek/deepseek-v4.1-flash",
+            "z-ai/glm-5.3",
+            "moonshotai/kimi-k3",
+            "qwen/qwen3.8-flash",
+            "anthropic/claude-sonnet-5.5",
+            "openai/gpt-5.6-sol",
+            "google/gemini-3.8-flash",
         ],
     },
     "minimax": {
