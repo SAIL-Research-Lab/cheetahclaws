@@ -12,7 +12,7 @@ Supported providers:
   openrouter — OpenRouter (openrouter/deepseek/deepseek-v4-flash, ...)
   requesty   — Requesty (requesty/openai/gpt-4o-mini, requesty/claude-sonnet-4-6, ...)
   runcrate   — Runcrate (runcrate/deepseek-ai/DeepSeek-V4.1-Flash, runcrate/zai-org/GLM-5.3, ...)
-  standardcompute — Standard Compute (standardcompute/StandardCompute, standardcompute/z-ai/glm-5.3, ...)
+  standardcompute: Standard Compute (standardcompute/StandardCompute, standardcompute/z-ai/glm-5.3, ...)
   minimax    — MiniMax (MiniMax-Text-01, abab6.5s-chat, ...)
   ollama     — Local Ollama (llama3.3, qwen2.5-coder, ...)
   lmstudio   — Local LM Studio (any loaded model)
