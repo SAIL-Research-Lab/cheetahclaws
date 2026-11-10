@@ -21,6 +21,7 @@ cheetahclaws --web
 cheetahclaws --web --port 9000
 cheetahclaws --web --host 0.0.0.0             # open to the local network
 cheetahclaws --web --no-auth                  # localhost dev only — skips login
+cheetahclaws --web --no-auth --lan            # let your phone connect (QR code at /pair)
 
 # Pin a model at launch (persists to ~/.cheetahclaws/config.json):
 cheetahclaws --web --model custom/qwen2.5-72b
@@ -227,6 +228,47 @@ Streaming events from the agent are rendered as distinct UI components, not raw 
 
 ---
 
+## Use it from your phone (`--lan`, `/pair`)
+
+The agent keeps running on your computer; the phone is a remote screen for it.
+
+```bash
+cheetahclaws --web --no-auth --lan
+# Phone:    http://localhost:8080/pair?token=…   ← open on the computer
+```
+
+`/pair` shows a QR code per reachable address (home/office Wi-Fi, and Tailscale
+`100.x` if it is running). Scan it with the phone camera:
+
+- **iPhone / iPad:** the link opens in Safari → **Share → Add to Home Screen**.
+  It then opens full-screen like an app.
+- **Android:** open in Chrome → **⋮ → Add to Home screen**, or install the
+  CheetahClaws Android app (`mobile/`) and scan/paste the link there.
+
+The desktop app does the same from **Phone → Connect Phone…**.
+
+How access works:
+
+- `--lan` binds `0.0.0.0` (unless `--host` says otherwise).
+- With `--no-auth`, a phone presents a **persistent pairing token**
+  (`~/.cheetahclaws/web_pair_token`, 0600). It is separate from the per-launch
+  token, so a paired phone keeps working after the computer restarts. The
+  server swaps it for a one-year HttpOnly cookie. Only the computer (the holder
+  of the per-launch token) can view it or press **Reset pairing**, which signs
+  every phone out.
+- With accounts (no `--no-auth`), the QR code is just the address, and the phone
+  signs in normally.
+- Only private and Tailscale addresses are offered. CheetahClaws never suggests
+  a public IP: traffic is plain HTTP, so to use your phone away from home,
+  put both devices on [Tailscale](https://tailscale.com) (or serve the port via
+  `tailscale serve` for HTTPS).
+- The chat page is an installable web app (`/manifest.webmanifest`, `/sw.js`).
+  When the computer is unreachable, the service worker shows an offline page.
+  Service workers need HTTPS or localhost, so on plain-HTTP LAN the home-screen
+  app works but has no offline page.
+
+---
+
 ## PTY terminal (`/`)
 
 A full xterm.js (v5.5) terminal emulator in the browser — identical to running `cheetahclaws` in a native shell. 100% feature parity.
@@ -296,6 +338,16 @@ All `/api/*` routes other than `/api/auth/*` and the ops endpoints require a val
 | `/health` | GET | `200 {"ok": true, "db": "ok", "uptime_s": ...}` or `503` with `db_err` if the DB is unreachable |
 | `/metrics` | GET | Prometheus v0.0.4 text. Exports `cheetahclaws_uptime_seconds`, `cheetahclaws_requests_total`, `cheetahclaws_requests_4xx`, `cheetahclaws_requests_5xx`, `cheetahclaws_auth_logins_total`, `cheetahclaws_auth_logins_failed`, `cheetahclaws_auth_registrations_total`, `cheetahclaws_users_total`, `cheetahclaws_ws_connections_total` |
 
+### Pairing / installable app
+
+| Route | Method | Purpose |
+|-------|--------|---------|
+| `/pair` | GET | QR-code page for connecting a phone (needs the launch token in `--no-auth` mode) |
+| `/api/pair/info` | GET | `{lan, mode: "token"\|"login", port, urls: [{label, kind, ip, url}]}` — computer / admin only (`403` for a paired phone) |
+| `/api/pair/reset` | POST | Issue a new pairing token (signs out every paired phone); `--no-auth --lan` only |
+| `/manifest.webmanifest` | GET | PWA manifest; `start_url` carries the pairing token only for a phone that already holds it |
+| `/sw.js`, `/offline.html` | GET | Service worker + "can't reach your computer" page |
+
 ### WebSocket events
 
 Frames are newline-delimited JSON objects with `{type, data, ts}`.
@@ -353,6 +405,7 @@ pytest tests/test_web_api.py -v
 | `CHEETAHCLAWS_WEB_SECRET` | persisted to `~/.cheetahclaws/web_secret` | JWT HS256 signing key |
 | `CHEETAHCLAWS_LOG_LEVEL` | `INFO` | `DEBUG` / `INFO` / `WARNING` / `ERROR` |
 | `CHEETAHCLAWS_WEB_SERVER` | set by `start_web_server` to `1` | Guards against recursive `--web` launches via shell aliases |
+| `CHEETAHCLAWS_PAIR_TOKEN` | persisted to `~/.cheetahclaws/web_pair_token` | Phone pairing token for `--no-auth --lan` |
 
 ---
 

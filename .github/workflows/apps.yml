@@ -1,0 +1,214 @@
+name: Apps
+
+# Downloadable apps: desktop installers (macOS .dmg, Windows .exe, Linux
+# .AppImage) and the phone app (Android .apk, iOS build).
+#
+#   Manual:  Actions → Apps → Run workflow      (artifacts on the run page)
+#   Release: git tag app-v0.2.0 && git push origin app-v0.2.0
+#            (also attaches everything to a GitHub Release)
+#
+# Builds are unsigned unless the signing secrets below are configured — see
+# desktop/README.md and mobile/README.md for what users see and how to sign.
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['app-v*']
+
+permissions:
+  contents: write
+
+jobs:
+  desktop:
+    name: desktop (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: macos-arm64, os: macos-14 }
+          - { name: windows-x64, os: windows-latest }
+          - { name: linux-x64,   os: ubuntu-22.04 }
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Freeze the Python server (PyInstaller)
+        run: PYTHON=python bash scripts/build-server.sh
+
+      - name: Install Electron build deps
+        run: npm ci
+
+      - name: Smoke-test the frozen server (launch, token gate, phone pairing)
+        # The web server's PTY terminal is POSIX-only; on Windows this
+        # reports problems without blocking the installer build.
+        continue-on-error: ${{ runner.os == 'Windows' }}
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then
+            export CHEETAHCLAWS_BIN="$PWD/server/dist/cheetahclaws-server/cheetahclaws-server.exe"
+          else
+            export CHEETAHCLAWS_BIN="$PWD/server/dist/cheetahclaws-server/cheetahclaws-server"
+          fi
+          npm run smoke
+
+      - name: Package installer
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # macOS signing + notarization (optional). Without them the app is
+          # ad-hoc signed: it runs, but Gatekeeper asks the user to confirm.
+          CSC_LINK: ${{ secrets.MAC_CERT_P12_BASE64 }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          extra=()
+          if [ "$RUNNER_OS" = macOS ] && [ -z "${CSC_LINK:-}" ]; then
+            export CSC_IDENTITY_AUTO_DISCOVERY=false
+            extra=(-c.mac.identity=- -c.mac.hardenedRuntime=false)
+          fi
+          [ -z "${CSC_LINK:-}" ] && unset CSC_LINK CSC_KEY_PASSWORD
+          npx electron-builder --publish never "${extra[@]}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CheetahClaws-${{ matrix.name }}
+          path: |
+            desktop/out/*.dmg
+            desktop/out/*.exe
+            desktop/out/*.AppImage
+          if-no-files-found: error
+
+  android:
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Unit tests
+        run: npm ci && npm test
+
+      - name: Point the app at CheetahClaws Cloud (repository variable CC_CLOUD_URL)
+        env:
+          CC_CLOUD_URL: ${{ vars.CC_CLOUD_URL }}
+        run: |
+          printf "window.CC_CLOUD_URL = '%s';\n" "$CC_CLOUD_URL" > www/config.js
+          cat www/config.js
+
+      - name: Generate + patch the Android project
+        run: |
+          pip install pillow
+          npx cap add android
+          python scripts/patch_native.py android
+          npx cap sync android
+
+      - name: Build APK
+        working-directory: mobile/android
+        run: ./gradlew --no-daemon assembleDebug
+
+      - name: Collect
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk CheetahClaws-android.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CheetahClaws-android
+          path: mobile/CheetahClaws-android.apk
+          if-no-files-found: error
+
+  ios:
+    runs-on: macos-15
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Point the app at CheetahClaws Cloud (repository variable CC_CLOUD_URL)
+        env:
+          CC_CLOUD_URL: ${{ vars.CC_CLOUD_URL }}
+        run: |
+          printf "window.CC_CLOUD_URL = '%s';\n" "$CC_CLOUD_URL" > www/config.js
+          cat www/config.js
+
+      - name: Generate + patch the iOS project
+        run: |
+          npm ci
+          pip install pillow
+          npx cap add ios --packagemanager SPM
+          python scripts/patch_native.py ios
+          npx cap sync ios
+
+      # Unsigned device build, packaged as an .ipa. Sideloading tools
+      # (AltStore, Sideloadly) re-sign it with the user's own Apple ID; with a
+      # Mac, open ios/App/App.xcodeproj in Xcode and press Run instead.
+      - name: Build (unsigned)
+        run: |
+          xcodebuild -project ios/App/App.xcodeproj -scheme App \
+            -configuration Release -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
+          mkdir -p Payload
+          cp -R build/Build/Products/Release-iphoneos/App.app Payload/
+          zip -qry CheetahClaws-ios-unsigned.ipa Payload
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CheetahClaws-ios-unsigned
+          path: mobile/CheetahClaws-ios-unsigned.ipa
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/app-v')
+    needs: [desktop, android, ios]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: CheetahClaws apps ${{ github.ref_name }}
+          files: dist/*
+          generate_release_notes: true

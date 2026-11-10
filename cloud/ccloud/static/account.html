@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0f14">
+<title>Account · CheetahClaws</title>
+<link rel="icon" href="/_cc/static/icon.png">
+<link rel="stylesheet" href="/_cc/static/cc.css">
+</head>
+<body>
+<main>
+  <div class="spread" style="margin-bottom:20px">
+    <div class="brand" style="margin:0">
+      <img src="/_cc/static/icon.png" alt="">
+      <div><h1>Account</h1><p id="email">…</p></div>
+    </div>
+    <a class="btn primary" href="/_cc/start?next=/chat">Open workspace</a>
+  </div>
+
+  <div class="msg ok" id="paid" hidden>Payment received — your credits will appear in a moment.</div>
+
+  <section class="card">
+    <h2>Credits</h2>
+    <div class="big" id="balance">…</div>
+    <p class="dim">Used only when you run on CheetahClaws models. Your own API key is billed by its provider.</p>
+    <div id="topup" hidden>
+      <div class="row" id="packs" style="margin-top:8px"></div>
+      <div class="msg err" id="topup-msg"></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Model</h2>
+    <label class="choice" id="c-platform">
+      <input type="radio" name="mode" value="platform">
+      <span><b>CheetahClaws models</b><span class="dim">Ready to use, paid from your credits.</span></span>
+    </label>
+    <div id="platform-box" style="padding:0 2px">
+      <label for="pmodel">Default model</label>
+      <select id="pmodel"></select>
+      <p class="dim" id="pprice"></p>
+    </div>
+    <label class="choice" id="c-byok">
+      <input type="radio" name="mode" value="byok">
+      <span><b>My own API key</b><span class="dim">Use your account with Anthropic, OpenAI, DeepSeek, Qwen… No credits used.</span></span>
+    </label>
+    <div id="byok-box" style="padding:0 2px">
+      <label for="prov">Provider</label>
+      <select id="prov"></select>
+      <div id="base-box">
+        <label for="base">Endpoint URL (OpenAI-compatible)</label>
+        <input id="base" type="url" placeholder="https://api.example.com/v1" autocapitalize="off">
+      </div>
+      <label for="bmodel">Model</label>
+      <input id="bmodel" autocapitalize="off" spellcheck="false">
+      <label for="key">API key</label>
+      <input id="key" type="password" autocomplete="off" spellcheck="false">
+      <p class="dim">Stored encrypted and only given to your own workspace.</p>
+    </div>
+    <div class="msg" id="save-msg"></div>
+    <button class="primary full" id="save">Save</button>
+    <p class="dim">Saving restarts your workspace. Files and chats are kept; a task that is running stops.</p>
+  </section>
+
+  <section class="card">
+    <h2>Recent usage</h2>
+    <table>
+      <thead><tr><th>When</th><th>Model</th><th class="num">Tokens</th><th class="num">Cost</th></tr></thead>
+      <tbody id="usage"><tr><td colspan="4" class="dim">No usage yet.</td></tr></tbody>
+    </table>
+  </section>
+
+  <section class="card">
+    <div class="spread">
+      <h2 style="margin:0">Sign out</h2>
+      <button id="logout">Sign out</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Delete account</h2>
+    <p class="dim">Permanently deletes your account, your workspace files, chats, memory and remaining credits. This can't be undone.</p>
+    <label for="del-pw">Confirm with your password</label>
+    <input id="del-pw" type="password" autocomplete="current-password">
+    <div class="msg err" id="del-msg"></div>
+    <button class="danger full" id="delete">Delete my account</button>
+  </section>
+</main>
+<script src="/_cc/static/cc.js"></script>
+<script>
+(function () {
+  var $ = cc.$, me = null;
+  var DEFAULT_MODELS = {
+    anthropic: 'claude-sonnet-4-6', openai: 'gpt-5', gemini: 'gemini-2.5-pro',
+    deepseek: 'deepseek-chat', qwen: 'qwen-max', kimi: 'kimi-k2', zhipu: 'glm-4.6',
+    minimax: 'MiniMax-M2', openrouter: 'deepseek/deepseek-v4-flash', custom: 'my-model',
+  };
+  var NAMES = { anthropic: 'Anthropic (Claude)', openai: 'OpenAI', gemini: 'Google Gemini',
+    deepseek: 'DeepSeek', qwen: 'Alibaba Qwen', kimi: 'Moonshot Kimi', zhipu: 'Zhipu GLM',
+    minimax: 'MiniMax', openrouter: 'OpenRouter', custom: 'Other (OpenAI-compatible)' };
+
+  if (new URLSearchParams(location.search).get('paid')) $('paid').hidden = false;
+
+  function mode() {
+    var r = document.querySelector('input[name=mode]:checked');
+    return r ? r.value : 'platform';
+  }
+  function syncMode() {
+    var m = mode();
+    $('c-platform').classList.toggle('on', m === 'platform');
+    $('c-byok').classList.toggle('on', m === 'byok');
+    $('platform-box').hidden = m !== 'platform';
+    $('byok-box').hidden = m !== 'byok';
+  }
+  function syncProvider() {
+    var p = $('prov').value;
+    $('base-box').hidden = p !== 'custom';
+    $('bmodel').placeholder = DEFAULT_MODELS[p] || '';
+    var same = me && p === me.byok_provider && me.byok_key_masked;
+    $('key').placeholder = same ? 'Saved (' + me.byok_key_masked + ') — leave blank to keep' : 'Paste your API key';
+  }
+  function syncPrice() {
+    var m = (me.models || []).find(function (x) { return x.id === $('pmodel').value; });
+    $('pprice').textContent = m && m.price_in != null
+      ? 'Input ' + cc.usd(m.price_in) + ' · output ' + cc.usd(m.price_out) + ' per 1M tokens'
+        + (m.context ? ' · ' + Math.round(m.context / 1000) + 'K context' : '') : '';
+  }
+
+  async function load() {
+    try { me = await cc.api('me'); } catch (e) { location.replace('/_cc/login?next=/_cc/account'); return; }
+    $('email').textContent = me.email;
+    $('balance').textContent = cc.usd(me.balance_usd);
+    $('pmodel').innerHTML = '';
+    me.models.forEach(function (m) {
+      var o = document.createElement('option'); o.value = m.id; o.textContent = m.label;
+      $('pmodel').appendChild(o);
+    });
+    if (me.platform_model) $('pmodel').value = me.platform_model;
+    $('prov').innerHTML = '';
+    me.providers.forEach(function (p) {
+      var o = document.createElement('option'); o.value = p; o.textContent = NAMES[p] || p;
+      $('prov').appendChild(o);
+    });
+    if (me.byok_provider) $('prov').value = me.byok_provider;
+    $('bmodel').value = me.byok_model || '';
+    $('base').value = me.byok_base_url || '';
+    document.querySelector('input[name=mode][value=' + me.model_mode + ']').checked = true;
+    syncMode(); syncProvider(); syncPrice();
+
+    // Buying credits happens on the web, never inside the iOS app (App Store 3.1.1).
+    if (me.payments_enabled && !cc.inApp) {
+      $('topup').hidden = false;
+      $('packs').innerHTML = '';
+      me.topup_packs_usd.forEach(function (amt) {
+        var b = document.createElement('button');
+        b.textContent = 'Add ' + cc.usd(amt);
+        b.onclick = async function () {
+          b.disabled = true;
+          try { location.href = (await cc.api('topup', { amount_usd: amt })).url; }
+          catch (e) { $('topup-msg').textContent = e.message; b.disabled = false; }
+        };
+        $('packs').appendChild(b);
+      });
+    }
+
+    var u = await cc.api('usage');
+    if (u.usage.length) {
+      $('usage').innerHTML = '';
+      u.usage.forEach(function (r) {
+        var tr = document.createElement('tr');
+        [new Date(r.ts * 1000).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }),
+         r.model, (r.input_tokens + r.output_tokens).toLocaleString(), cc.usd(r.cost_usd)]
+          .forEach(function (v, i) {
+            var td = document.createElement('td'); td.textContent = v;
+            if (i >= 2) td.className = 'num';
+            tr.appendChild(td);
+          });
+        $('usage').appendChild(tr);
+      });
+    }
+  }
+
+  document.querySelectorAll('input[name=mode]').forEach(function (r) { r.onchange = syncMode; });
+  $('prov').onchange = function () {
+    if (!$('bmodel').value || Object.values(DEFAULT_MODELS).indexOf($('bmodel').value) >= 0) {
+      $('bmodel').value = '';
+    }
+    syncProvider();
+  };
+  $('pmodel').onchange = syncPrice;
+
+  $('save').onclick = async function () {
+    var btn = $('save'), msg = $('save-msg');
+    btn.disabled = true; msg.className = 'msg'; msg.textContent = 'Saving…';
+    var body = mode() === 'platform'
+      ? { model_mode: 'platform', platform_model: $('pmodel').value }
+      : { model_mode: 'byok', byok_provider: $('prov').value,
+          byok_model: $('bmodel').value || $('bmodel').placeholder,
+          byok_key: $('key').value, byok_base_url: $('base').value };
+    try {
+      await cc.api('settings', body);
+      $('key').value = '';
+      msg.className = 'msg ok'; msg.textContent = 'Saved. Your workspace will use it from now on.';
+      await load();
+    } catch (e) {
+      msg.className = 'msg err'; msg.textContent = e.message;
+    }
+    btn.disabled = false;
+  };
+
+  $('logout').onclick = async function () {
+    await cc.api('logout', {});
+    location.replace('/_cc/login');
+  };
+
+  $('delete').onclick = async function () {
+    if (!confirm('Delete your account and everything in your workspace? This cannot be undone.')) return;
+    $('del-msg').textContent = '';
+    try {
+      await cc.api('delete', { password: $('del-pw').value });
+      location.replace('/_cc/login');
+    } catch (e) { $('del-msg').textContent = e.message; }
+  };
+
+  load();
+})();
+</script>
+</body>
+</html>

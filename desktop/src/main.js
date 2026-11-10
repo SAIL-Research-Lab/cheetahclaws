@@ -4,17 +4,55 @@
 //
 // Architecture: this process owns a single BrowserWindow. On launch it shows a
 // loading page, spawns the existing `cheetahclaws --web --no-auth` server as a
-// localhost-only sidecar (see sidecar.js), then points the webview at that
-// server's /chat URL — so the production-ready web UI *is* the desktop app, no
-// reimplementation. The server is bound to 127.0.0.1 and runs as the local
-// user (bring-your-own API key); nothing is exposed to the network.
+// sidecar (see sidecar.js), then points the webview at that server's /chat
+// URL — so the production-ready web UI *is* the desktop app, no
+// reimplementation. The server runs as the local user (bring-your-own API
+// key) and by default listens on 127.0.0.1 only.
+//
+// Phone access ("Connect Phone…" in the menu) restarts the server with
+// --lan: it then also listens on the local network, on a fixed port so a
+// paired phone keeps working across restarts, and only accepts devices that
+// hold the persistent pairing token shown as a QR code on /pair.
 
-const { app, BrowserWindow, dialog, shell } = require('electron');
+const { app, BrowserWindow, Menu, dialog, shell } = require('electron');
+const fs = require('fs');
 const path = require('path');
-const { startSidecar } = require('./sidecar');
+const { startSidecar, stopChild } = require('./sidecar');
 
 let mainWindow = null;
+let pairWindow = null;
 let sidecar = null;
+let restarting = false;
+
+const DEFAULT_PHONE_PORT = 47821;
+
+// ── Persisted preferences (userData/settings.json) ─────────────────────────
+
+function settingsPath() {
+  return path.join(app.getPath('userData'), 'settings.json');
+}
+
+function loadSettings() {
+  try {
+    return { phoneAccess: false, phonePort: DEFAULT_PHONE_PORT,
+      ...JSON.parse(fs.readFileSync(settingsPath(), 'utf8')) };
+  } catch (_) {
+    return { phoneAccess: false, phonePort: DEFAULT_PHONE_PORT };
+  }
+}
+
+function saveSettings(s) {
+  try {
+    fs.mkdirSync(path.dirname(settingsPath()), { recursive: true });
+    fs.writeFileSync(settingsPath(), JSON.stringify(s, null, 2));
+  } catch (err) {
+    console.error('[desktop] could not save settings:', err.message);
+  }
+}
+
+let settings = null;
+
+// ── Server sidecar ─────────────────────────────────────────────────────────
 
 // Where to find the CheetahClaws server:
 //   - $CHEETAHCLAWS_BIN wins (explicit override, handy for dev).
@@ -30,6 +68,64 @@ function resolveServerCommand() {
   }
   return 'cheetahclaws';
 }
+
+async function launchServer() {
+  const base = { command: resolveServerCommand(),
+    onLog: (line) => console.log('[cheetahclaws]', line) };
+  if (!settings.phoneAccess) {
+    return startSidecar(base);
+  }
+  // Phone access: fixed port so paired phones find us again. If something
+  // else holds that port, fall back to any free port (phones then need the
+  // new QR code) rather than failing to start.
+  const lanArgs = ['--web', '--no-auth', '--lan'];
+  try {
+    return await startSidecar({ ...base,
+      args: [...lanArgs, '--port', String(settings.phonePort)] });
+  } catch (err) {
+    console.warn('[desktop] phone port busy, using a free port:', err.message);
+    return startSidecar({ ...base, args: lanArgs });
+  }
+}
+
+function watchServer(sc) {
+  // If the server dies while the app is open, say so instead of going blank.
+  sc.child.on('exit', (code, signal) => {
+    if (app.isQuitting || restarting || sc !== sidecar) return;
+    showFatal(new Error(
+      `The CheetahClaws server stopped unexpectedly (code=${code}, signal=${signal}).`));
+  });
+}
+
+function serverAlive() {
+  return sidecar && sidecar.child && sidecar.child.exitCode === null
+    && !sidecar.child.signalCode;
+}
+
+function serverOrigin() {
+  return sidecar ? `http://127.0.0.1:${sidecar.port}` : null;
+}
+
+async function restartServer() {
+  restarting = true;
+  try {
+    if (pairWindow && !pairWindow.isDestroyed()) pairWindow.close();
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      await mainWindow.loadFile(path.join(__dirname, 'loading.html'));
+    }
+    if (sidecar) await stopChild(sidecar.child);
+    sidecar = await launchServer();
+    watchServer(sidecar);
+    if (mainWindow && !mainWindow.isDestroyed()) await mainWindow.loadURL(sidecar.url);
+  } catch (err) {
+    showFatal(err);
+  } finally {
+    restarting = false;
+  }
+  buildMenu();
+}
+
+// ── Windows ────────────────────────────────────────────────────────────────
 
 async function createWindow() {
   mainWindow = new BrowserWindow({
@@ -48,31 +144,105 @@ async function createWindow() {
       nodeIntegration: false,
     },
   });
+  mainWindow.on('closed', () => { mainWindow = null; });
+
+  // macOS keeps the app (and server) alive with no windows; reopening just
+  // needs a window, not a second server.
+  if (serverAlive()) {
+    await mainWindow.loadURL(sidecar.url);
+    return;
+  }
 
   // Show something immediately while the server boots (cold start is ~1s).
   await mainWindow.loadFile(path.join(__dirname, 'loading.html'));
 
   try {
-    sidecar = await startSidecar({
-      command: resolveServerCommand(),
-      onLog: (line) => console.log('[cheetahclaws]', line),
-    });
+    sidecar = await launchServer();
   } catch (err) {
     return showFatal(err);
   }
+  watchServer(sidecar);
   // sidecar.url carries the per-launch access token; keep it out of logs.
-  console.log('[desktop] server ready on port', sidecar.port);
+  console.log('[desktop] server ready on port', sidecar.port,
+    settings.phoneAccess ? '(phone access on)' : '');
 
   if (mainWindow && !mainWindow.isDestroyed()) {
     await mainWindow.loadURL(sidecar.url);
   }
+  buildMenu();
+}
 
-  // If the server dies while the app is open, say so instead of going blank.
-  sidecar.child.on('exit', (code, signal) => {
-    if (app.isQuitting) return;
-    showFatal(new Error(
-      `The CheetahClaws server stopped unexpectedly (code=${code}, signal=${signal}).`));
+function openPairWindow() {
+  if (!serverAlive()) return;
+  if (pairWindow && !pairWindow.isDestroyed()) {
+    pairWindow.focus();
+    return;
+  }
+  pairWindow = new BrowserWindow({
+    width: 760,
+    height: 820,
+    title: 'Connect a phone',
+    parent: process.platform === 'darwin' ? undefined : mainWindow || undefined,
+    backgroundColor: '#0b0f14',
+    autoHideMenuBar: true,
+    webPreferences: { contextIsolation: true, nodeIntegration: false },
   });
+  pairWindow.on('closed', () => { pairWindow = null; });
+  // The token query is swapped for the same session cookie the main window
+  // already holds; passing it keeps this window independent of load order.
+  const q = sidecar.token ? `?token=${encodeURIComponent(sidecar.token)}` : '';
+  pairWindow.loadURL(`${serverOrigin()}/pair${q}`);
+}
+
+async function connectPhone() {
+  if (!settings.phoneAccess) {
+    const { response } = await dialog.showMessageBox(mainWindow || undefined, {
+      type: 'question',
+      buttons: ['Turn On Phone Access', 'Cancel'],
+      defaultId: 0,
+      cancelId: 1,
+      message: 'Use CheetahClaws from your phone?',
+      detail: 'Your phone connects to the agent running on this computer. '
+        + 'CheetahClaws will accept connections from your local network, but only '
+        + 'from devices that scan the pairing QR code.\n\n'
+        + 'Your computer may ask you to allow incoming connections — choose Allow.',
+    });
+    if (response !== 0) return;
+    settings.phoneAccess = true;
+    saveSettings(settings);
+    await restartServer();
+  }
+  openPairWindow();
+}
+
+async function turnOffPhoneAccess() {
+  if (!settings.phoneAccess) return;
+  settings.phoneAccess = false;
+  saveSettings(settings);
+  await restartServer();
+}
+
+// ── Menu ───────────────────────────────────────────────────────────────────
+
+function buildMenu() {
+  const isMac = process.platform === 'darwin';
+  const template = [
+    ...(isMac ? [{ role: 'appMenu' }] : []),
+    { role: 'fileMenu' },
+    { role: 'editMenu' },
+    {
+      label: 'Phone',
+      submenu: [
+        { label: 'Connect Phone…', accelerator: 'CmdOrCtrl+Shift+P',
+          click: () => { connectPhone(); } },
+        { label: 'Turn Off Phone Access', enabled: !!(settings && settings.phoneAccess),
+          click: () => { turnOffPhoneAccess(); } },
+      ],
+    },
+    { role: 'viewMenu' },
+    { role: 'windowMenu' },
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
 function showFatal(err) {
@@ -106,11 +276,19 @@ function escapeHtml(s) {
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
-// Open target=_blank / external links in the system browser, never a new
-// Electron window.
+// Links: our own /pair page opens in an app window (it needs the session
+// cookie the system browser doesn't have); other http(s) links go to the
+// system browser; nothing ever gets a raw new Electron window.
 app.on('web-contents-created', (_e, contents) => {
   contents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:/i.test(url)) { shell.openExternal(url); return { action: 'deny' }; }
+    let u = null;
+    try { u = new URL(url); } catch (_) { return { action: 'deny' }; }
+    const origin = serverOrigin();
+    if (origin && u.origin === origin && u.pathname === '/pair') {
+      connectPhone();
+      return { action: 'deny' };
+    }
+    if (u.protocol === 'http:' || u.protocol === 'https:') shell.openExternal(url);
     return { action: 'deny' };
   });
 });
@@ -126,7 +304,11 @@ if (!app.requestSingleInstanceLock()) {
     }
   });
 
-  app.whenReady().then(createWindow);
+  app.whenReady().then(() => {
+    settings = loadSettings();
+    buildMenu();
+    return createWindow();
+  });
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

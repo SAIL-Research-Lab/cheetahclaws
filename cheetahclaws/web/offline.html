@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>CheetahClaws · offline</title>
+<style>
+:root { --bg:#f6f7f9; --text:#15191f; --dim:#5b6573; --accent:#0e9fb8; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg:#0b0f14; --text:#e6edf3; --dim:#94a0ad; --accent:#22d3ee; }
+}
+html, body { height:100%; margin:0; }
+body { background:var(--bg); color:var(--text); display:flex; align-items:center;
+  justify-content:center; padding:24px 16px; box-sizing:border-box;
+  font:15px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; text-align:center; }
+.box { max-width:420px; }
+img { width:72px; height:72px; border-radius:18px; }
+h1 { font-size:20px; margin:16px 0 8px; }
+p { color:var(--dim); margin:0 0 8px; }
+button { margin-top:16px; font:inherit; font-weight:600; padding:10px 22px; border-radius:10px;
+  border:0; background:var(--accent); color:#04141a; cursor:pointer; }
+</style>
+</head>
+<body>
+<div class="box">
+  <img src="/static/icons/icon-192.png" alt="">
+  <h1>Can't reach your computer</h1>
+  <p>Make sure CheetahClaws is running on your computer with phone access turned on,
+     and that this phone is on the same Wi-Fi (or both are on Tailscale).</p>
+  <p>Tasks you already started keep running on the computer.</p>
+  <button onclick="location.href='/chat'">Try again</button>
+</div>
+</body>
+</html>

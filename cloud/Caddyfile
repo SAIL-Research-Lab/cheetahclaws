@@ -1,0 +1,12 @@
+# Public entry point. Caddy gets and renews the HTTPS certificate itself.
+{$CC_DOMAIN} {
+	# The metered model gateway is for sandboxes only (they reach the gateway
+	# directly on the internal network), never for the internet.
+	@internal path /internal/*
+	respond @internal 404
+
+	reverse_proxy gateway:8000 {
+		# Stream SSE / long agent replies immediately.
+		flush_interval -1
+	}
+}

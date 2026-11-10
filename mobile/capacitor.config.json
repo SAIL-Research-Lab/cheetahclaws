@@ -1,0 +1,19 @@
+{
+  "appId": "ai.saferl.cheetahclaws",
+  "appName": "CheetahClaws",
+  "webDir": "www",
+  "backgroundColor": "#0b0f14",
+  "appendUserAgent": "CheetahClawsApp/0.1",
+  "server": {
+    "androidScheme": "https",
+    "cleartext": true,
+    "allowNavigation": ["*"]
+  },
+  "android": {
+    "allowMixedContent": true
+  },
+  "ios": {
+    "contentInset": "never",
+    "limitsNavigationsToAppBoundDomains": false
+  }
+}

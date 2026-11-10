@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="referrer" content="no-referrer">
+<title>Connect a phone · CheetahClaws</title>
+<link rel="icon" type="image/png" href="/static/icons/icon-192.png">
+<style>
+:root {
+  --bg:#f6f7f9; --surface:#ffffff; --border:#e2e5ea; --text:#15191f;
+  --dim:#5b6573; --accent:#0e9fb8; --warn:#b45309; --danger:#c2410c;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg:#0b0f14; --surface:#131a22; --border:#232c37; --text:#e6edf3;
+          --dim:#94a0ad; --accent:#22d3ee; --warn:#f59e0b; --danger:#fb923c; }
+}
+* { box-sizing:border-box; }
+body { margin:0; background:var(--bg); color:var(--text);
+  font:15px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  padding:max(24px, env(safe-area-inset-top)) 16px 32px; }
+main { max-width:760px; margin:0 auto; }
+h1 { font-size:22px; margin:0 0 4px; }
+.sub { color:var(--dim); margin:0 0 24px; }
+.cards { display:grid; gap:16px; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); }
+.card { background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:18px; }
+.card h2 { font-size:15px; margin:0 0 2px; }
+.card .ip { color:var(--dim); font-size:13px; margin-bottom:12px; font-family:ui-monospace,Menlo,monospace; }
+.qr { background:#fff; border-radius:10px; padding:10px; display:flex; justify-content:center; }
+.qr svg { width:100%; max-width:240px; height:auto; display:block; }
+.row { display:flex; gap:8px; margin-top:12px; }
+button { font:inherit; padding:8px 14px; border-radius:9px; border:1px solid var(--border);
+  background:var(--surface); color:var(--text); cursor:pointer; }
+button.primary { background:var(--accent); border-color:var(--accent); color:#04141a; font-weight:600; }
+button.danger { color:var(--danger); }
+.steps { margin-top:28px; }
+.steps h3 { font-size:15px; margin:18px 0 6px; }
+.steps ol { margin:0; padding-left:20px; color:var(--dim); }
+.note { margin-top:24px; padding:12px 14px; border-radius:10px; border:1px solid var(--border);
+  background:var(--surface); color:var(--dim); font-size:14px; }
+.note b { color:var(--text); }
+code { font-family:ui-monospace,Menlo,monospace; font-size:13px; background:var(--border);
+  padding:1px 5px; border-radius:5px; }
+.err { color:var(--warn); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Connect a phone</h1>
+  <p class="sub" id="sub">Loading…</p>
+  <div class="cards" id="cards"></div>
+
+  <section class="steps" id="steps" hidden>
+    <h3>iPhone / iPad</h3>
+    <ol>
+      <li>Open the Camera and point it at the QR code, then tap the link (it opens in Safari).</li>
+      <li>Tap <b>Share</b> → <b>Add to Home Screen</b>. CheetahClaws now opens like an app.</li>
+    </ol>
+    <h3>Android</h3>
+    <ol>
+      <li>Scan the QR code with the camera or Google Lens and open the link in Chrome.</li>
+      <li>Menu <b>⋮</b> → <b>Add to Home screen</b> (or install the CheetahClaws Android app and paste the link).</li>
+    </ol>
+  </section>
+
+  <div class="note" id="note" hidden></div>
+</main>
+
+<script src="/static/js/csrf.js"></script>
+<script src="/static/js/vendor/qrcode.js"></script>
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+
+  function qrSvg(text) {
+    var qr = qrcode(0, 'M');   // 0 = pick the smallest version that fits
+    qr.addData(text);
+    qr.make();
+    return qr.createSvgTag({ cellSize: 6, margin: 2, scalable: true });
+  }
+
+  function card(u, tokenMode) {
+    var el = document.createElement('div');
+    el.className = 'card';
+    var h = document.createElement('h2'); h.textContent = u.label;
+    var ip = document.createElement('div'); ip.className = 'ip'; ip.textContent = u.ip;
+    var qr = document.createElement('div'); qr.className = 'qr'; qr.innerHTML = qrSvg(u.url);
+    var row = document.createElement('div'); row.className = 'row';
+    var copy = document.createElement('button');
+    copy.textContent = tokenMode ? 'Copy pairing link' : 'Copy link';
+    copy.onclick = function () {
+      (navigator.clipboard ? navigator.clipboard.writeText(u.url) : Promise.reject())
+        .then(function () { copy.textContent = 'Copied'; },
+              function () { window.prompt('Copy this link:', u.url); });
+    };
+    row.appendChild(copy);
+    el.append(h, ip, qr, row);
+    return el;
+  }
+
+  function render(info) {
+    var cards = $('cards'), note = $('note');
+    cards.innerHTML = '';
+    var tokenMode = info.mode === 'token';
+    if (!info.lan) {
+      $('sub').textContent = 'Phone access is off.';
+      note.hidden = false;
+      note.innerHTML = 'Turn it on from the desktop app (<b>Connect Phone…</b> in the menu), '
+        + 'or restart the server with <code>cheetahclaws --web --lan</code>.';
+      return;
+    }
+    if (!info.urls.length) {
+      $('sub').textContent = 'No private network address found.';
+      note.hidden = false;
+      note.innerHTML = 'This computer has no home/office Wi-Fi address right now (only a public '
+        + 'internet address, or none — CheetahClaws will not put your agent on the open internet). '
+        + 'Install <b>Tailscale</b> on this computer and your phone to connect securely from anywhere, '
+        + 'then reload this page.';
+      return;
+    }
+    $('sub').textContent = tokenMode
+      ? 'Scan with your phone. It stays paired until you reset pairing.'
+      : 'Scan with your phone, then sign in with your CheetahClaws account.';
+    info.urls.forEach(function (u) { cards.appendChild(card(u, tokenMode)); });
+    $('steps').hidden = false;
+    note.hidden = false;
+    var parts = ['Your phone must be on the <b>same Wi-Fi</b> as this computer. '
+      + 'To use it on mobile data or another network, install <b>Tailscale</b> on both devices — '
+      + 'a “Tailscale” code appears here once it is running.'];
+    if (tokenMode) {
+      parts.push('<br><br>Anyone who gets this link can use your agent. Lost a phone? '
+        + '<button class="danger" id="reset">Reset pairing</button> signs out every paired device.');
+    }
+    note.innerHTML = parts.join('');
+    var r = $('reset');
+    if (r) r.onclick = function () {
+      if (!confirm('Sign out every paired phone? You will need to scan a new code.')) return;
+      fetch('/api/pair/reset', { method: 'POST', credentials: 'same-origin' })
+        .then(function (res) { return res.json(); }).then(render, showErr);
+    };
+  }
+
+  function showErr(e) {
+    $('sub').innerHTML = '<span class="err"></span>';
+    $('sub').firstChild.textContent = String((e && e.message) || e);
+  }
+
+  fetch('/api/pair/info', { credentials: 'same-origin' })
+    .then(function (res) {
+      return res.json().then(function (j) {
+        if (!res.ok) throw new Error(j.error || res.statusText);
+        return j;
+      });
+    })
+    .then(render, showErr);
+})();
+</script>
+</body>
+</html>

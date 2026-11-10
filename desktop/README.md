@@ -38,7 +38,29 @@ scope for P1.
 - ⛏️ **Remaining for a shippable installer:** code signing / notarization (see
   open items) — everything else is wired and tested.
 
-## Prerequisites
+## Download
+
+GitHub Actions builds the installers ([`.github/workflows/apps.yml`](../.github/workflows/apps.yml)).
+Run **Actions → Apps → Run workflow**, or push a tag `app-v*` to attach them to
+a GitHub Release.
+
+| OS | File | First launch |
+|---|---|---|
+| macOS (Apple Silicon) | `CheetahClaws-<v>-mac-arm64.dmg` | Without a Developer ID, the build is ad-hoc signed. Right-click the app → **Open** once, or run `xattr -cr /Applications/CheetahClaws.app` if macOS calls it "damaged". |
+| Windows | `CheetahClaws-<v>-win-x64.exe` | SmartScreen: **More info → Run anyway** until a code-signing cert is added. |
+| Linux | `CheetahClaws-<v>-linux-x86_64.AppImage` | `chmod +x` it and run. |
+
+Add your API key in the app's **Settings** (⚙) the first time.
+
+## Use it from your phone
+
+Choose **Phone → Connect Phone…** (⌘/Ctrl+Shift+P). The app restarts its server
+with `--lan` on a fixed port (47821) and shows a pairing QR code. Phones that
+scan it stay paired across restarts until you reset pairing. **Phone → Turn Off
+Phone Access** goes back to localhost-only. See [`../mobile/`](../mobile/README.md)
+for the iPhone/Android app; on iPhone, Safari's **Add to Home Screen** also works.
+
+## Prerequisites (development)
 
 - **Node.js 18+** and npm.
 - The **`cheetahclaws` CLI on your PATH, with the web extra**:

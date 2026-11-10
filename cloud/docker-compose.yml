@@ -1,0 +1,53 @@
+# CheetahClaws Cloud — run with ./deploy.sh (or: docker compose up -d --build)
+name: cheetahclaws-cloud
+
+services:
+  gateway:
+    build:
+      context: ..
+      dockerfile: cloud/Dockerfile
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
+    image: cheetahclaws-cloud-gateway:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      CC_DB_URL: sqlite:////data/cloud.db
+      CC_MODELS_FILE: /config/models.json
+      CC_DOCKER_SOCK: /var/run/docker.sock
+      CC_SANDBOX_NETWORK: cc-sandbox
+      CC_SANDBOX_REACH: network
+      CC_INTERNAL_URL: http://cc-gateway:8000
+    volumes:
+      - ./data:/data
+      - ./models.json:/config/models.json:ro
+      - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
+    networks:
+      web: {}
+      sandbox:
+        aliases: [cc-gateway]
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on: [gateway]
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      CC_DOMAIN: ${CC_DOMAIN:?set CC_DOMAIN in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [web]
+
+networks:
+  web: {}
+  # User sandboxes are attached here by the gateway at runtime.
+  sandbox:
+    name: cc-sandbox
+
+volumes:
+  caddy_data: {}
+  caddy_config: {}

@@ -19,16 +19,18 @@ PY="${PYTHON:-python3}"
 echo "→ creating clean build venv: $VENV"
 rm -rf "$VENV"
 "$PY" -m venv "$VENV"
-"$VENV/bin/pip" install -q --upgrade pip
+# Windows venvs put executables in Scripts/, everything else in bin/.
+if [ -d "$VENV/Scripts" ]; then VBIN="$VENV/Scripts"; else VBIN="$VENV/bin"; fi
+"$VBIN/python" -m pip install -q --upgrade pip
 
 echo "→ installing cheetahclaws[web] (core + web deps only)"
-"$VENV/bin/pip" install -q -e "$REPO_ROOT[web]"
-"$VENV/bin/pip" install -q pyinstaller
+"$VBIN/python" -m pip install -q -e "$REPO_ROOT[web]"
+"$VBIN/python" -m pip install -q pyinstaller
 
 echo "→ freezing server (PyInstaller)"
 cd "$SERVER_DIR"
 rm -rf build dist
-"$VENV/bin/pyinstaller" cheetahclaws-server.spec --noconfirm --log-level WARN
+"$VBIN/python" -m PyInstaller cheetahclaws-server.spec --noconfirm --log-level WARN
 
 echo ""
 echo "✓ built: $SERVER_DIR/dist/cheetahclaws-server/"

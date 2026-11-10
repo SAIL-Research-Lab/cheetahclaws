@@ -73,6 +73,13 @@ _chat_ui_ready = False  # set by _try_init_chat_auth after deps loaded
 _server_launch_token: Optional[str] = None
 _LAUNCH_COOKIE = "cclaunch"
 
+# --lan: devices on the network (phones) may connect. In --no-auth mode they
+# present the persistent pairing token (web/pairing.py) instead of the
+# per-launch token, so they stay paired across restarts. None = no pairing.
+_server_pair_token: Optional[str] = None
+_server_lan = False
+_server_port = 0
+
 # Security knobs read from ~/.cheetahclaws/config.json at startup (see
 # _load_web_settings). Tests poke this dict directly.
 _web_settings: dict = {
@@ -102,6 +109,8 @@ _MIME = {
     ".jpeg": "image/jpeg",
     ".woff": "font/woff",
     ".woff2": "font/woff2",
+    ".json": "application/json",
+    ".webmanifest": "application/manifest+json",
 }
 
 
@@ -617,6 +626,32 @@ def _send_http(sock: socket.socket, status: str, content_type: str,
         pass
 
 
+def _pair_api(path: str, method: str, cookie: str) -> tuple[str, dict]:
+    """GET /api/pair/info and POST /api/pair/reset → (status, json body)."""
+    global _server_pair_token
+    if not _pair_owner_ok(cookie):
+        return "403 Forbidden", {
+            "error": "Open this page on the computer running CheetahClaws "
+                     "(or sign in as an admin)."}
+    if path == "/api/pair/reset":
+        if method != "POST":
+            return "405 Method Not Allowed", {"error": "use POST"}
+        if not (_server_no_auth and _server_lan):
+            return "400 Bad Request", {"error": "pairing is not enabled"}
+        from cheetahclaws.web.pairing import reset_pair_token
+        _server_pair_token = reset_pair_token()
+    elif method != "GET":
+        return "405 Method Not Allowed", {"error": "use GET"}
+    from cheetahclaws.web.pairing import device_urls
+    token = _server_pair_token if _server_no_auth else None
+    return "200 OK", {
+        "lan": _server_lan,
+        "mode": "token" if _server_no_auth else "login",
+        "port": _server_port,
+        "urls": device_urls(_server_port, token) if _server_lan else [],
+    }
+
+
 def _send_json(sock: socket.socket, obj: dict,
                request_origin: str = "") -> None:
     body = json.dumps(obj).encode()
@@ -745,7 +780,30 @@ def _launch_token_ok(query: str = "", body_token: str = "",
                 _query_value(query, "token")):
         if tok and hmac.compare_digest(str(tok), _server_launch_token):
             return True
+        if (tok and _server_pair_token
+                and hmac.compare_digest(str(tok), _server_pair_token)):
+            return True
     return False
+
+
+def _is_pair_token(tok: str) -> bool:
+    return bool(tok and _server_pair_token
+                and hmac.compare_digest(str(tok), _server_pair_token))
+
+
+def _pair_owner_ok(cookie_str: str) -> bool:
+    """May this caller see / reset the pairing token?
+
+    --no-auth: only the holder of the *launch* token (the desktop window or
+    whoever ran the command), not an already-paired phone. Password mode:
+    an admin account.
+    """
+    if _server_no_auth:
+        if _server_launch_token is None:
+            return True
+        tok = _cookie_value(cookie_str, _LAUNCH_COOKIE)
+        return bool(tok) and hmac.compare_digest(tok, _server_launch_token)
+    return _is_admin(_jwt_user_id(cookie_str))
 
 
 def _jwt_user_id(cookie_str: str) -> Optional[int]:
@@ -787,7 +845,8 @@ _ADMIN_ONLY_MSG = ("This action is restricted to admin users. The server "
                    "owner can set \"web_nonadmin_privileged\": true in "
                    "~/.cheetahclaws/config.json to allow all users.")
 
-_LAUNCH_GATED_PAGES = frozenset({"/", "/index.html", "/chat", "/lab"})
+_LAUNCH_GATED_PAGES = frozenset({"/", "/index.html", "/chat", "/lab",
+                                 "/pair"})
 
 
 def _launch_url_hint() -> str:
@@ -808,13 +867,23 @@ def _launch_gate(sock, path: str, query: str, cookie: str,
     """
     from urllib.parse import quote
     q_tok = _query_value(query, "token")
-    if q_tok and hmac.compare_digest(q_tok, _server_launch_token or ""):
+    is_launch = bool(q_tok) and hmac.compare_digest(
+        q_tok, _server_launch_token or "")
+    is_pair = not is_launch and _is_pair_token(q_tok)
+    if is_launch or is_pair:
         rest = "&".join(p for p in query.split("&")
                         if p and not p.startswith("token="))
         location = path + (f"?{rest}" if rest else "")
+        # A paired device keeps its cookie across browser restarts; the
+        # per-launch token is useless after this run, so it stays a
+        # session cookie.
+        max_age = ""
+        if is_pair:
+            from cheetahclaws.web.pairing import PAIR_COOKIE_MAX_AGE
+            max_age = f" Max-Age={PAIR_COOKIE_MAX_AGE};"
         hdrs = (f"Location: {location}\r\n"
                 f"Set-Cookie: {_LAUNCH_COOKIE}="
-                f"{quote(_server_launch_token or '')}; Path=/; HttpOnly; "
+                f"{quote(q_tok)}; Path=/;{max_age} HttpOnly; "
                 f"SameSite=Strict\r\n"
                 f"Cache-Control: no-store\r\n"
                 f"Referrer-Policy: no-referrer\r\n")
@@ -824,11 +893,33 @@ def _launch_gate(sock, path: str, query: str, cookie: str,
     if _launch_token_ok(cookie_str=cookie):
         return False
     import html as _html
+    pair_form = ""
+    if _server_pair_token:
+        # A phone that lost its cookie (or an iOS home-screen app, which has
+        # its own cookie jar) can paste the pairing link here instead of
+        # re-scanning. The script only extracts ?token= and reloads.
+        pair_form = (
+            "<form onsubmit=\"var v=this.t.value.trim(),m=v.match("
+            "/[?&]token=([\\w-]+)/);location.search='?token='+"
+            "encodeURIComponent(m?m[1]:v);return false\" "
+            "style='margin-top:1.5rem'>"
+            "<p>Pairing a phone? Paste the link from <b>Connect phone</b> "
+            "on your computer:</p>"
+            "<input name=t autocomplete=off placeholder='http://…/chat?token=…' "
+            "style='box-sizing:border-box;width:100%;max-width:28rem;"
+            "padding:.7rem;font-size:16px;margin-bottom:.6rem;"
+            "border-radius:8px;border:1px solid #333;background:#111;"
+            "color:#eee'> <button style='padding:.7rem 1.2rem;font-size:16px;"
+            "border-radius:8px;border:0;background:#22d3ee'>Connect</button>"
+            "</form>")
     body = ("<!DOCTYPE html><html><head><meta charset='utf-8'>"
+            "<meta name='viewport' content='width=device-width,"
+            "initial-scale=1'>"
             "<title>CheetahClaws — access token required</title></head>"
             "<body style='font-family:sans-serif;background:#0a0a0a;"
             "color:#e4e4e7;padding:2rem'><h2>Access token required</h2>"
-            f"<p>{_html.escape(_launch_url_hint())}</p></body></html>")
+            f"<p>{_html.escape(_launch_url_hint())}</p>{pair_form}"
+            "</body></html>")
     _send_http(sock, "401 Unauthorized", "text/html; charset=utf-8",
                body.encode(), request_origin=origin)
     return True
@@ -1732,6 +1823,40 @@ def _handle_connection(sock: socket.socket, addr: tuple) -> None:
             sock.close()
             return
 
+        # ── PWA manifest (public; carries the pair token only for a caller
+        #    that already holds it, so a home-screen app can sign in) ────
+        if path == "/manifest.webmanifest" and method == "GET":
+            from cheetahclaws.web.pairing import manifest
+            start = "/chat"
+            held = _cookie_value(cookie, _LAUNCH_COOKIE)
+            if _server_no_auth and _is_pair_token(held):
+                from urllib.parse import quote
+                start = f"/chat?token={quote(held)}"
+            _send_http(sock, "200 OK", "application/manifest+json",
+                       json.dumps(manifest(start)).encode(),
+                       "Cache-Control: no-store\r\n", request_origin=origin)
+            sock.close()
+            return
+
+        # ── Phone pairing ───────────────────────────────────────────
+        if path == "/pair" and method == "GET":
+            # Page is static; /api/pair/info enforces who may see the token.
+            _send_http(sock, "200 OK", "text/html; charset=utf-8",
+                       (_WEB_DIR / "pair.html").read_bytes(),
+                       "Cache-Control: no-store\r\n"
+                       "Referrer-Policy: no-referrer\r\n",
+                       request_origin=origin)
+            sock.close()
+            return
+
+        if path in ("/api/pair/info", "/api/pair/reset"):
+            status, obj = _pair_api(path, method, cookie)
+            _send_http(sock, status, "application/json",
+                       json.dumps(obj).encode(),
+                       "Cache-Control: no-store\r\n", request_origin=origin)
+            sock.close()
+            return
+
         # ── Chat UI page ────────────────────────────────────────────
         if path == "/chat" and method == "GET":
             # Serve chat.html always — it has its own login handling.
@@ -2344,15 +2469,20 @@ def start_web_server(
     host: str = "127.0.0.1",
     no_auth: bool = False,
     allowed_origins=None,
+    lan: bool = False,
 ) -> None:
     """Run the web server (blocking).
+
+    ``lan``: let other devices (phones) on the network connect — binds all
+    interfaces and, in --no-auth mode, accepts the persistent pairing token
+    from ``web/pairing.py``. Open ``/pair`` for the QR code.
 
     ``allowed_origins``: extra browser origins allowed to make cross-origin
     requests, on top of ``web_allowed_origins`` in config and the
     comma-separated $CHEETAHCLAWS_WEB_ALLOWED_ORIGINS.
     """
     global _server_password, _server_no_auth, _server_cmd
-    global _server_launch_token
+    global _server_launch_token, _server_pair_token, _server_lan, _server_port
 
     # Guard against recursive startup (e.g. shell alias maps
     # cheetahclaws → cheetahclaws --web)
@@ -2371,6 +2501,25 @@ def start_web_server(
     _server_launch_token = (_generate_password()
                             if no_auth and settings["require_launch_token"]
                             else None)
+    # A supervisor that fronts this server (CheetahClaws Cloud gives every
+    # user a container) pins the token so it can authenticate its proxied
+    # requests without scraping stdout. Too-short values are ignored.
+    _pinned = os.environ.get("CHEETAHCLAWS_LAUNCH_TOKEN", "").strip()
+    if _server_launch_token is not None and len(_pinned) >= 32:
+        _server_launch_token = _pinned
+    _server_lan = bool(lan)
+    if lan and host in ("127.0.0.1", "localhost", "::1"):
+        host = "0.0.0.0"
+    if lan and no_auth:
+        if _server_launch_token is None:
+            # Without the launch gate there is nothing to pair against, and
+            # an open LAN server would run anyone's commands. Refuse.
+            print("\033[31mError: --lan with --no-auth needs the access-token "
+                  "gate (web_no_auth_require_token must stay true).\033[0m",
+                  file=sys.stderr)
+            sys.exit(2)
+        from cheetahclaws.web.pairing import load_or_create_pair_token
+        _server_pair_token = load_or_create_pair_token()
 
     # Install structured logging first so later errors are captured correctly.
     try:
@@ -2416,6 +2565,7 @@ def start_web_server(
 
     srv, port = _bind_port(host, port)
     srv.listen(5)
+    _server_port = port
 
     print(f"\n  \033[36mCheetahClaws Web Terminal\033[0m", flush=True)
     print(f"  \033[2m{'─' * 40}\033[0m", flush=True)
@@ -2428,6 +2578,11 @@ def start_web_server(
           flush=True)
     if host == "0.0.0.0":
         print(f"  Host:     \033[33m0.0.0.0 (network accessible)\033[0m", flush=True)
+    if lan:
+        pair_q = f"?token={_server_launch_token}" if _server_launch_token else ""
+        print(f"  Phone:    \033[1mhttp://localhost:{port}/pair{pair_q}\033[0m "
+              f"\033[2m(open on this computer, scan the QR code)\033[0m",
+              flush=True)
     if not no_auth:
         print(f"  Terminal pwd: \033[1;33m{_server_password}\033[0m  "
               f"\033[2m(for / index page only)\033[0m", flush=True)

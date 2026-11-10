@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0f14">
+<title>Starting · CheetahClaws</title>
+<link rel="icon" href="/_cc/static/icon.png">
+<link rel="stylesheet" href="/_cc/static/cc.css">
+</head>
+<body>
+<main class="center" role="status" aria-live="polite">
+  <div class="spinner" id="spin"></div>
+  <h2 id="title" style="font-size:18px;margin:0 0 6px">Starting your workspace…</h2>
+  <p class="dim" id="sub">Your agent's computer is waking up. This takes a few seconds.</p>
+  <div class="row" style="justify-content:center;margin-top:16px" id="actions" hidden>
+    <button class="primary" id="retry">Try again</button>
+    <a class="btn" href="/_cc/account">Account</a>
+  </div>
+</main>
+<script src="/_cc/static/cc.js"></script>
+<script>
+(function () {
+  var $ = cc.$;
+  async function go() {
+    $('spin').hidden = false;
+    $('actions').hidden = true;
+    $('title').textContent = 'Starting your workspace…';
+    try {
+      await cc.api('workspace/start', {});
+      location.replace(cc.next('/chat'));
+    } catch (err) {
+      if (/not signed in/.test(err.message)) { location.replace('/_cc/login'); return; }
+      $('spin').hidden = true;
+      $('title').textContent = "Couldn't start your workspace";
+      $('sub').textContent = err.message;
+      $('actions').hidden = false;
+    }
+  }
+  $('retry').onclick = go;
+  go();
+})();
+</script>
+</body>
+</html>

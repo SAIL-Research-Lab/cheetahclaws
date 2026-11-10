@@ -2335,6 +2335,10 @@ def main():
                         help="Host for web terminal (default: 127.0.0.1, use 0.0.0.0 for network)")
     parser.add_argument("--no-auth", action="store_true",
                         help="Disable web terminal password (local use only)")
+    parser.add_argument("--lan", action="store_true",
+                        help="With --web: let phones / other devices on your "
+                             "network connect (binds 0.0.0.0; open /pair for "
+                             "a QR code)")
     parser.add_argument("-h", "--help", action="store_true", help="Show help")
     from cheetahclaws import headless as _headless
     _headless.add_arguments(parser)
@@ -2395,7 +2399,8 @@ def main():
         # systemd) gets both channels with one command.
         _start_headless_bridges(_cfg)
         from cheetahclaws.web.server import start_web_server
-        start_web_server(port=args.port, host=args.host, no_auth=args.no_auth)
+        start_web_server(port=args.port, host=args.host, no_auth=args.no_auth,
+                         lan=args.lan)
         sys.exit(0)
 
     from cheetahclaws.config import load_config, save_config, has_api_key

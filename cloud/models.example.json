@@ -1,0 +1,35 @@
+{
+  "_comment": "Our model service catalog. id = what users pick; upstream_* = where the gateway sends it, with the key in env var key_env. price_in/price_out = USD per 1M tokens that USERS pay (set your margin here). context = tokens. Copy to models.json and edit.",
+  "models": [
+    {
+      "id": "deepseek-v4-flash",
+      "label": "DeepSeek V4 Flash (fast, low cost)",
+      "upstream_base": "https://api.deepseek.com/v1",
+      "upstream_model": "deepseek-chat",
+      "key_env": "DEEPSEEK_API_KEY",
+      "price_in": 0.40,
+      "price_out": 1.60,
+      "context": 128000
+    },
+    {
+      "id": "claude-sonnet-4-6",
+      "label": "Claude Sonnet 4.6 (via OpenRouter)",
+      "upstream_base": "https://openrouter.ai/api/v1",
+      "upstream_model": "anthropic/claude-sonnet-4.6",
+      "key_env": "OPENROUTER_API_KEY",
+      "price_in": 3.60,
+      "price_out": 18.00,
+      "context": 200000
+    },
+    {
+      "id": "qwen-max",
+      "label": "Qwen Max (Alibaba DashScope)",
+      "upstream_base": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "upstream_model": "qwen-max",
+      "key_env": "DASHSCOPE_API_KEY",
+      "price_in": 1.80,
+      "price_out": 7.20,
+      "context": 32000
+    }
+  ]
+}

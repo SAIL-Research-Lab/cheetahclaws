@@ -38,6 +38,7 @@ cheetahclaws        # start chatting!
 Other install methods: [one-line install script](#alternative-one-line-install-script) | [install from source](#alternative-install-with-pip-from-source-code) | [uv install](#alternative-install-with-uv) | [run from source install](#alternative-run-directly-from-source-no-install) | [full install details](#installation) | [docker install](https://hub.docker.com/r/chauncygu/cheetahclaws)
 
 > 🖥️ **Prefer a native app?** A desktop build (Electron) wraps the full chat UI in a window — no terminal needed. See [`desktop/`](desktop/README.md).
+> 📱 **On your phone?** Pair it with your computer (**Phone → Connect Phone…** in the desktop app, or `cheetahclaws --web --no-auth --lan`), then use the iPhone/Android app or Safari's *Add to Home Screen*. See [`mobile/`](mobile/README.md).
 
 ## 🔥🔥🔥 News (Pacific Time)
 

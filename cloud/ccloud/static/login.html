@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0f14">
+<title>Sign in · CheetahClaws</title>
+<link rel="icon" href="/_cc/static/icon.png">
+<link rel="apple-touch-icon" href="/_cc/static/icon.png">
+<link rel="stylesheet" href="/_cc/static/cc.css">
+</head>
+<body>
+<main>
+  <div class="brand">
+    <img src="/_cc/static/icon.png" alt="">
+    <div>
+      <h1>CheetahClaws</h1>
+      <p>Your AI agent, with its own computer in the cloud.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="tabs" role="tablist">
+      <button id="tab-in" class="on" role="tab">Sign in</button>
+      <button id="tab-up" role="tab">Create account</button>
+    </div>
+    <form id="form" novalidate>
+      <label for="email">Email</label>
+      <input id="email" type="email" autocomplete="email" inputmode="email" autocapitalize="off" required>
+      <label for="pw">Password</label>
+      <input id="pw" type="password" autocomplete="current-password" minlength="8" required>
+      <p class="dim" id="pw-hint" hidden>At least 8 characters.</p>
+      <div class="msg err" id="msg" role="alert"></div>
+      <button class="primary full" id="submit" type="submit">Sign in</button>
+    </form>
+  </div>
+  <p class="dim" id="signup-note" hidden>New accounts get free starter credits for our models.
+    You can also use your own API key (Anthropic, OpenAI, DeepSeek, Qwen, Gemini, OpenRouter…).</p>
+</main>
+<script src="/_cc/static/cc.js"></script>
+<script>
+(function () {
+  var mode = 'in', $ = cc.$;
+  function setMode(m) {
+    mode = m;
+    $('tab-in').classList.toggle('on', m === 'in');
+    $('tab-up').classList.toggle('on', m === 'up');
+    $('submit').textContent = m === 'in' ? 'Sign in' : 'Create account';
+    $('pw').autocomplete = m === 'in' ? 'current-password' : 'new-password';
+    $('pw-hint').hidden = m === 'in';
+    $('signup-note').hidden = m === 'in';
+    $('msg').textContent = '';
+  }
+  $('tab-in').onclick = function () { setMode('in'); };
+  $('tab-up').onclick = function () { setMode('up'); };
+  if (new URLSearchParams(location.search).get('signup')) setMode('up');
+
+  $('form').onsubmit = async function (e) {
+    e.preventDefault();
+    var btn = $('submit');
+    btn.disabled = true;
+    $('msg').textContent = '';
+    try {
+      await cc.api(mode === 'in' ? 'login' : 'register',
+                   { email: $('email').value, password: $('pw').value });
+      location.replace('/_cc/start?next=' + encodeURIComponent(cc.next('/chat')));
+    } catch (err) {
+      $('msg').textContent = err.message;
+      btn.disabled = false;
+    }
+  };
+})();
+</script>
+</body>
+</html>

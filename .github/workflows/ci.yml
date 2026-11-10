@@ -29,6 +29,23 @@ jobs:
       - name: Run tests
         run: python -m pytest tests/ -x -q --tb=short
 
+  cloud:
+    # CheetahClaws Cloud gateway: unit tests + the no-Docker end-to-end run
+    # (real gateway, real CheetahClaws servers, mock model upstream).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[web]" -r cloud/requirements.txt pytest
+      - name: Gateway tests
+        working-directory: cloud
+        run: CC_E2E=local python -m pytest tests/test_gateway.py tests/e2e_local.py -q --tb=short
+
   package-smoke:
     runs-on: ubuntu-latest
     strategy:

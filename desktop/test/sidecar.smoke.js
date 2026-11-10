@@ -24,6 +24,21 @@ function get(url, headers = {}) {
   });
 }
 
+function getJson(url, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const req = http.get(url, { headers }, (res) => {
+      let data = '';
+      res.on('data', (d) => { data += d; });
+      res.on('end', () => {
+        try { resolve({ code: res.statusCode, body: JSON.parse(data) }); }
+        catch (e) { reject(e); }
+      });
+    });
+    req.on('error', reject);
+    req.setTimeout(5000, () => req.destroy(new Error('request timeout')));
+  });
+}
+
 function expect(ep, got, want) {
   console.log(`   GET ${ep.padEnd(24)} -> ${got}`);
   if (got !== want) throw new Error(`expected ${want} for ${ep}, got ${got}`);
@@ -53,11 +68,44 @@ function expect(ep, got, want) {
     for (const ep of ['/chat', '/']) {
       expect(`${ep} (cookie)`, (await get(`${base}${ep}`, { Cookie: cookie })).code, 200);
     }
-    console.log('✅ SMOKE PASS — shell can launch the server and reach the chat UI');
   } finally {
     await stopChild(sc.child);
     console.log('→ sidecar stopped');
   }
+
+  // Phone access: what the desktop "Connect Phone…" menu launches.
+  console.log('→ starting sidecar with phone access: --web --no-auth --lan');
+  const lan = await startSidecar({
+    args: ['--web', '--no-auth', '--lan'],
+    readyTimeoutMs: 30000,
+    onLog: (l) => process.env.DEBUG && console.log('   |', l),
+  });
+  try {
+    const base = `http://127.0.0.1:${lan.port}`;
+    const r = await get(`${base}/pair?token=${lan.token}`);
+    expect('/pair?token=…', r.code, 302);
+    const cookie = (r.headers['set-cookie'] || [])
+      .map((c) => String(c).split(';')[0])
+      .find((c) => c.startsWith('cclaunch='));
+    expect('/pair (cookie)', (await get(`${base}/pair`, { Cookie: cookie })).code, 200);
+    const info = await getJson(`${base}/api/pair/info`, { Cookie: cookie });
+    expect('/api/pair/info', info.code, 200);
+    if (!info.body.lan) throw new Error('pair info says LAN is off');
+    console.log(`   phone links: ${info.body.urls.length} (${info.body.urls.map((u) => u.ip).join(', ') || 'no LAN address'})`);
+    // A phone opening the pairing link gets in, and stays in (Max-Age cookie).
+    for (const u of info.body.urls.slice(0, 1)) {
+      const phone = await get(u.url);
+      expect('phone pairing link', phone.code, 302);
+      const pc = (phone.headers['set-cookie'] || []).find((c) => String(c).startsWith('cclaunch='));
+      if (!/Max-Age=\d+/.test(String(pc))) throw new Error('pairing cookie is not persistent');
+      const host = new URL(u.url).origin;
+      expect('phone /chat (cookie)', (await get(`${host}/chat`, { Cookie: String(pc).split(';')[0] })).code, 200);
+    }
+  } finally {
+    await stopChild(lan.child);
+    console.log('→ sidecar stopped');
+  }
+  console.log('✅ SMOKE PASS — shell can launch the server, reach the chat UI, and pair a phone');
 })().catch((err) => {
   console.error('❌ SMOKE FAIL —', err.message);
   process.exit(1);

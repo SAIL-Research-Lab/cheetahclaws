@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<title>CheetahClaws</title>
+<style>
+:root {
+  --bg:#0b0f14; --surface:#131a22; --border:#232c37; --text:#e6edf3;
+  --dim:#94a0ad; --accent:#22d3ee; --accent-ink:#04141a; --warn:#f59e0b; --danger:#fb923c;
+}
+@media (prefers-color-scheme: light) {
+  :root { --bg:#f6f7f9; --surface:#ffffff; --border:#e2e5ea; --text:#15191f;
+          --dim:#5b6573; --accent:#0e9fb8; --accent-ink:#ffffff; --warn:#b45309; --danger:#c2410c; }
+}
+* { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+html, body { margin:0; min-height:100%; background:var(--bg); color:var(--text);
+  font:16px/1.5 -apple-system,system-ui,"Segoe UI",Roboto,sans-serif; }
+body { padding:calc(env(safe-area-inset-top) + 20px) 16px calc(env(safe-area-inset-bottom) + 24px); }
+main { max-width:520px; margin:0 auto; }
+header { display:flex; align-items:center; gap:12px; margin-bottom:24px; }
+header img { width:44px; height:44px; border-radius:11px; }
+h1 { font-size:22px; margin:0; }
+.sub { color:var(--dim); font-size:14px; margin:0; }
+h2 { font-size:13px; font-weight:600; text-transform:uppercase; letter-spacing:.04em;
+  color:var(--dim); margin:24px 0 8px; }
+.list { background:var(--surface); border:1px solid var(--border); border-radius:14px; overflow:hidden; }
+.item { display:flex; align-items:center; gap:12px; padding:14px 14px; border-top:1px solid var(--border); }
+.item:first-child { border-top:0; }
+.item .main { flex:1; min-width:0; text-align:left; background:none; border:0; color:inherit;
+  font:inherit; padding:0; cursor:pointer; }
+.item .name { font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.item .meta { color:var(--dim); font-size:13px; }
+.item .del { background:none; border:0; color:var(--dim); font-size:20px; padding:4px 8px; cursor:pointer; }
+.empty { color:var(--dim); padding:18px 14px; font-size:15px; }
+button.primary, button.secondary { width:100%; font:inherit; font-weight:600; padding:14px; border-radius:12px;
+  cursor:pointer; margin-top:12px; }
+button.primary { background:var(--accent); color:var(--accent-ink); border:0; }
+button.secondary { background:var(--surface); color:var(--text); border:1px solid var(--border); }
+input { width:100%; font:inherit; padding:13px 14px; border-radius:12px; border:1px solid var(--border);
+  background:var(--surface); color:var(--text); }
+input:focus { outline:2px solid var(--accent); outline-offset:-1px; }
+.help { color:var(--dim); font-size:14px; margin-top:20px; }
+.help ol { padding-left:20px; margin:6px 0 0; }
+.err { color:var(--warn); font-size:14px; margin-top:10px; min-height:1em; }
+.or { text-align:center; color:var(--dim); font-size:13px; margin:16px 0 4px; }
+code { font-family:ui-monospace,Menlo,monospace; font-size:13px; background:var(--border);
+  padding:1px 5px; border-radius:5px; }
+#connecting { position:fixed; inset:0; background:var(--bg); display:none; flex-direction:column;
+  align-items:center; justify-content:center; gap:14px; padding:24px; text-align:center; }
+#connecting.show { display:flex; }
+.spinner { width:34px; height:34px; border-radius:50%; border:3px solid var(--border);
+  border-top-color:var(--accent); animation:spin .8s linear infinite; }
+@keyframes spin { to { transform:rotate(360deg); } }
+#connecting button { width:auto; padding:10px 22px; }
+[hidden] { display:none !important; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <img src="icon.png" alt="">
+    <div>
+      <h1>CheetahClaws</h1>
+      <p class="sub">Your agent, running on your computer.</p>
+    </div>
+  </header>
+
+  <section id="cloud" hidden>
+    <button class="primary" id="cloud-btn">Sign in to CheetahClaws</button>
+    <p class="sub" style="margin:10px 2px 0">Your agent gets its own computer in the cloud. Nothing to install —
+      use our models or your own API key.</p>
+  </section>
+
+  <section id="home">
+    <h2 id="computers-title">Your computers</h2>
+    <div class="list" id="list"></div>
+    <button class="primary" id="add-btn">Add a computer</button>
+  </section>
+
+  <section id="add" hidden>
+    <h2>Add a computer</h2>
+    <button class="primary" id="scan-btn" hidden>Scan QR code</button>
+    <div class="or" id="or" hidden>or paste the pairing link</div>
+    <form id="add-form">
+      <input id="link" type="url" inputmode="url" autocomplete="off" autocapitalize="off"
+             spellcheck="false" placeholder="http://192.168.1.20:47821/chat?token=…">
+      <div class="err" id="add-err"></div>
+      <button class="primary" type="submit">Connect</button>
+    </form>
+    <button class="secondary" id="cancel-add">Cancel</button>
+    <div class="help">
+      On your computer:
+      <ol>
+        <li>Open the CheetahClaws desktop app and choose <b>Phone → Connect Phone…</b><br>
+            (or run <code>cheetahclaws --web --lan</code> and open the <b>/pair</b> link it prints).</li>
+        <li>Scan the QR code, or copy the link and paste it here.</li>
+      </ol>
+      Your phone needs to be on the same Wi-Fi, or both devices on Tailscale.
+    </div>
+  </section>
+</main>
+
+<div id="connecting" role="status" aria-live="polite">
+  <div class="spinner" id="spinner"></div>
+  <div id="conn-text">Connecting…</div>
+  <div class="err" id="conn-err"></div>
+  <button class="primary" id="conn-retry" hidden>Try anyway</button>
+  <button class="secondary" id="conn-cancel">Cancel</button>
+</div>
+
+<script src="config.js"></script>
+<script type="module" src="app.mjs"></script>
+</body>
+</html>

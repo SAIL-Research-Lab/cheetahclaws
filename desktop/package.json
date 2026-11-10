@@ -1,9 +1,9 @@
 {
   "name": "cheetahclaws-desktop",
   "productName": "CheetahClaws",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "Desktop shell for CheetahClaws \u2014 wraps the local web UI in a native window",
+  "description": "Desktop shell for CheetahClaws — wraps the local web UI in a native window",
   "author": "SafeRL-Lab",
   "license": "Apache-2.0",
   "main": "src/main.js",
@@ -46,6 +46,11 @@
       "target": "AppImage",
       "category": "Development",
       "icon": "assets/icon.png"
+    },
+    "artifactName": "CheetahClaws-${version}-${os}-${arch}.${ext}",
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
     }
   }
 }

@@ -2,11 +2,19 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
 <title>CheetahClaws Chat</title>
 <link rel="icon" type="image/png" sizes="256x256" href="/static/favicon.png">
 <link rel="icon" type="image/x-icon" sizes="any" href="/favicon.ico">
-<link rel="apple-touch-icon" href="/static/favicon.png">
+<!-- Installable app (phone home screen / desktop PWA). use-credentials so a
+     paired phone's manifest can carry its sign-in (see web/pairing.py). -->
+<link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials">
+<link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
+<meta name="theme-color" content="#0b0f14">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="CheetahClaws">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <script>
   // Apply the saved theme BEFORE first paint to avoid a flash of the wrong
   // theme. Keep in sync with initTheme() in /static/js/settings.js.
@@ -89,7 +97,7 @@
 }
 * { margin:0; padding:0; box-sizing:border-box; }
 body { background:var(--bg); color:var(--text); font-family:var(--font);
-       height:100vh; display:flex; overflow:hidden; font-size:14px;
+       height:100vh; height:100dvh; display:flex; overflow:hidden; font-size:14px;
        transition:background .3s ease, color .3s ease; }
 #sidebar, #main, #topbar, #input-area, #settings-panel, .tool-card, .approval-card,
 .activity-indicator, .msg .bubble, #prompt-input, #send-btn,
@@ -535,18 +543,32 @@ body.resizing { cursor:col-resize; user-select:none; }
   padding:3px 8px; border-radius:var(--radius-sm); cursor:pointer; font-size:13px;
 }
 #topbar .settings-btn:hover { border-color:var(--accent); color:var(--accent); }
+#topbar a.settings-btn { text-decoration:none; display:inline-block; line-height:inherit; }
+#topbar a.settings-btn[hidden] { display:none; }
 
 /* ── Responsive ───────────────────────────────────────────────── */
 @media (max-width:768px) {
   #sidebar {
-    position:fixed; top:0; left:0; height:100vh; z-index:200;
+    position:fixed; top:0; left:0; height:100vh; height:100dvh; z-index:200;
+    width:min(85vw, 320px) !important; min-width:0; overflow:hidden;
     transform:translateX(-100%);
+    padding-top:env(safe-area-inset-top);
   }
   #sidebar.open { transform:translateX(0); }
   #sidebar-resizer { display:none; }
   #topbar .menu-btn { display:block; }
+  #topbar a.pair-btn { display:none; }
   .msg { max-width:95%; }
   .msg.user { max-width:90%; }
+  /* iOS zooms into any input under 16px on focus — keep the composer at 16. */
+  #prompt-input, .sp-input, .sp-select { font-size:16px; }
+  #input-area { padding:10px 12px max(12px, env(safe-area-inset-bottom)); }
+  #settings-panel { width:100vw; height:100dvh; padding-top:env(safe-area-inset-top); }
+}
+/* Home-screen app: the status bar overlays the page (black-translucent), so
+   keep the top bar clear of the notch. */
+@media (display-mode: standalone) {
+  #topbar { padding-top:max(10px, env(safe-area-inset-top)); }
 }
 </style>
 </head>
@@ -619,6 +641,9 @@ body.resizing { cursor:col-resize; user-select:none; }
     <span class="status">
       <span class="dot" id="status-dot"></span>
       <span id="status-text">idle</span>
+      <a class="settings-btn" id="app-switch-btn" href="#" hidden title="Switch computer" aria-label="Switch computer">&#8644;</a>
+      <a class="settings-btn" id="cloud-account-btn" href="/_cc/account" hidden title="Account &amp; credits">Account</a>
+      <a class="settings-btn pair-btn" href="/pair" target="_blank" rel="noopener" title="Connect a phone" aria-label="Connect a phone">&#128241;</a>
       <button class="settings-btn" onclick="app.toggleTheme()" id="theme-btn" title="Toggle theme">&#9790;</button>
       <button class="settings-btn" onclick="app.toggleSettings()" title="Settings">&#9881;</button>
     </span>
@@ -733,6 +758,41 @@ body.resizing { cursor:col-resize; user-select:none; }
 <script src="/static/js/settings.js"></script>
 <script src="/static/js/welcome.js"></script>
 <script src="/static/js/init.js"></script>
+<script>
+  // Installable app + offline page. Service workers need a secure context
+  // (https or localhost); a phone on plain-http LAN skips this and still
+  // works, it just has no offline page. The desktop app doesn't need it.
+  if ('serviceWorker' in navigator && window.isSecureContext
+      && !/Electron/.test(navigator.userAgent)) {
+    navigator.serviceWorker.register('/sw.js').catch(function () {});
+  }
+  // Phones: the desktop placeholder (with its Shift+Enter hint) wraps.
+  if (window.matchMedia('(max-width:768px)').matches) {
+    var pi = document.getElementById('prompt-input');
+    if (pi) pi.placeholder = 'Message CheetahClaws…';
+  }
+  // Served by CheetahClaws Cloud: show credits / account. (Elsewhere this
+  // path doesn't exist and the button stays hidden.)
+  fetch('/_cc/api/me', { credentials: 'same-origin' })
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (me) {
+      if (!me || typeof me.balance_usd !== 'number') return;
+      var a = document.getElementById('cloud-account-btn');
+      a.textContent = me.model_mode === 'platform' ? '$' + me.balance_usd.toFixed(2) : 'Account';
+      a.hidden = false;
+      var pair = document.querySelector('#topbar .pair-btn');
+      if (pair) pair.hidden = true;
+    })
+    .catch(function () {});
+  // Inside the CheetahClaws phone app: a button back to its computer list.
+  // (Keep in sync with appHomeUrl() in mobile/www/connect.mjs.)
+  if (/CheetahClawsApp\//.test(navigator.userAgent)) {
+    var sw = document.getElementById('app-switch-btn');
+    sw.href = /Android/i.test(navigator.userAgent)
+      ? 'https://localhost/?switch=1' : 'capacitor://localhost/?switch=1';
+    sw.hidden = false;
+  }
+</script>
 
 </body>
 </html>
