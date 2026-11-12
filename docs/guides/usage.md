@@ -215,6 +215,42 @@ IDs have no price entry, so `/cost` records tokens but estimates $0, and the
 context window is the gateway default of 128k (raise it with
 `/config context_window=<N>`).
 
+### Opper (700+ models, one key)
+
+[Opper](https://opper.ai) is a European AI gateway with 700+ models behind
+one OpenAI-compatible endpoint (`https://api.opper.ai/v3/compat`). Get a key
+at [platform.opper.ai](https://platform.opper.ai); docs are at
+[docs.opper.ai](https://docs.opper.ai).
+
+```bash
+export OPPER_API_KEY=...                  # or: /config opper_api_key=...
+
+cheetahclaws --model opper/claude-sonnet-4-6
+cheetahclaws --model opper/gpt-5.4-mini
+cheetahclaws --model opper/anthropic/claude-sonnet-4-6   # pin one route
+```
+
+As with OpenRouter, the first segment (`opper`) is the provider and
+everything after it is sent verbatim as the model ID. That can be a model
+name with no vendor prefix (`claude-sonnet-4-6`), for which Opper picks the
+route among the providers that serve that model, or a `<provider>/<model>`
+path (`anthropic/claude-sonnet-4-6`) that pins one route. The full catalog is
+public at `GET https://api.opper.ai/v3/models` and
+[opper.ai/models](https://opper.ai/models).
+
+> **Cost tracking:** as with OpenRouter, `/cost` and the `/quota` budget price
+> Opper usage from the same per-model table as direct calls. Several IDs in
+> the `/model` picker (`claude-haiku-4-5`, `gpt-5.4`, `gpt-5.4-mini`,
+> `gemini-3.5-flash`, `kimi-k3`, `glm-5.3`, `qwen3.8-max`) have no price entry
+> yet, so they record tokens but estimate $0. Set a **token** budget rather
+> than a dollar one for those.
+>
+> **Context window:** a pinned route with a vendor CheetahClaws knows
+> (`opper/anthropic/...`) uses that vendor's window. A model name has no
+> vendor segment, so it uses the gateway default of 128k unless the model is
+> in the built-in registry. Raise it with `/config context_window=<N>` if you
+> want the model's full window.
+
 ### LiteLLM (AWS Bedrock / Azure / Vertex AI)
 
 Use the `litellm/` prefix when the upstream needs auth that's painful to
