@@ -19,16 +19,29 @@ PY="${PYTHON:-python3}"
 echo "→ creating clean build venv: $VENV"
 rm -rf "$VENV"
 "$PY" -m venv "$VENV"
-"$VENV/bin/pip" install -q --upgrade pip
+
+if [[ -x "$VENV/bin/pip" ]]; then
+    PIP="$VENV/bin/pip"
+    PYINSTALLER="$VENV/bin/pyinstaller"
+elif [[ -x "$VENV/Scripts/pip.exe" ]]; then
+    PIP="$VENV/Scripts/pip.exe"
+    PYINSTALLER="$VENV/Scripts/pyinstaller.exe"
+else
+    echo "Unable to locate pip in the build virtual environment" >&2
+    exit 1
+fi
+
+"$PIP" install -q --upgrade pip
 
 echo "→ installing cheetahclaws[web] (core + web deps only)"
-"$VENV/bin/pip" install -q -e "$REPO_ROOT[web]"
-"$VENV/bin/pip" install -q pyinstaller
+cd "$REPO_ROOT"
+"$PIP" install -q -e ".[web]"
+"$PIP" install -q pyinstaller
 
 echo "→ freezing server (PyInstaller)"
 cd "$SERVER_DIR"
 rm -rf build dist
-"$VENV/bin/pyinstaller" cheetahclaws-server.spec --noconfirm --log-level WARN
+"$PYINSTALLER" cheetahclaws-server.spec --noconfirm --log-level WARN
 
 echo ""
 echo "✓ built: $SERVER_DIR/dist/cheetahclaws-server/"
