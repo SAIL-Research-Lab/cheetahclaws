@@ -66,7 +66,11 @@ jobs:
 
       - name: Package installer
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # NOTE: do NOT set GH_TOKEN here. electron-builder treats a set
+          # GH_TOKEN as "use the GitHub publish provider", then tries to build
+          # auto-update metadata and crashes on "Cannot read properties of
+          # null (reading 'channel')" because package.json has no repository
+          # field. --publish never makes GH_TOKEN unnecessary.
           # macOS signing + notarization (optional). Without them the app is
           # ad-hoc signed: it runs, but Gatekeeper asks the user to confirm.
           CSC_LINK: ${{ secrets.MAC_CERT_P12_BASE64 }}
