@@ -24,7 +24,13 @@ if [ -d "$VENV/Scripts" ]; then VBIN="$VENV/Scripts"; else VBIN="$VENV/bin"; fi
 "$VBIN/python" -m pip install -q --upgrade pip
 
 echo "→ installing cheetahclaws[web] (core + web deps only)"
-"$VBIN/python" -m pip install -q -e "$REPO_ROOT[web]"
+# `cd` into the repo and install `.` (relative) instead of passing the
+# absolute `$REPO_ROOT[web]` path. On Windows Git Bash/MSYS, the absolute
+# path + extras suffix (`/d/.../repo[web]`) gets mangled by MSYS2 path
+# conversion, so pip installs a bogus path and the freeze later fails with
+# "module 'cheetahclaws' not found".
+cd "$REPO_ROOT"
+"$VBIN/python" -m pip install -q -e ".[web]"
 "$VBIN/python" -m pip install -q pyinstaller
 
 echo "→ freezing server (PyInstaller)"
