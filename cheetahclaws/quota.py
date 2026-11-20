@@ -153,8 +153,8 @@ def output_room(session_id: str, config: dict,
     if config.get("daily_token_budget"):
         rooms.append(int(config["daily_token_budget"]) - u["daily_tokens"] - pt)
     try:
-        from cheetahclaws.providers import COSTS, bare_model
-        _ic, oc = COSTS.get(bare_model(config.get("model", "")), (0.0, 0.0))
+        from cheetahclaws.providers import model_rates
+        _ic, oc = model_rates(config.get("model", ""))
     except Exception:
         oc = 0.0
     if oc and oc > 0:
