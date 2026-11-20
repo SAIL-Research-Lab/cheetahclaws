@@ -781,18 +781,60 @@ def get_api_key(provider_name: str, config: dict) -> str:
     return prov.get("api_key", "")
 
 
-def calc_cost(model: str, in_tok: int, out_tok: int,
-              cache_read_tok: int = 0, cache_write_tok: int = 0) -> float:
-    """Estimate USD cost. Anthropic reports cached tokens separately from
-    input_tokens, priced at 0.1x (read) / 1.25x (write) of the input rate —
-    omitting them would silently under-report spend once prompt caching is
-    active."""
+_LIST_PRICED = ("anthropic", "openai", "google")
+
+
+def _list_price(model: str):
+    """List price row from llm-prices for an Anthropic, OpenAI or Gemini model.
+
+    COSTS only knows the ids typed into it: every other model in PROVIDERS
+    (gpt-5, gpt-4.1, o3, o4-mini, claude-opus-4-5, ...) priced at $0.00 and
+    never moved a cost budget, and the typed rows go stale (Opus 4.6 is
+    $5/$25, not $15/$75). llm-prices carries dated, source-cited list prices
+    for these three vendors. Other providers (NIM's free tier, DeepSeek,
+    Moonshot, Qwen, ...) keep their COSTS rows. Returns None when the package
+    is missing or the model is not a listed first-party model.
+    """
+    try:
+        import llm_prices
+    except ImportError:
+        return None
+    row = llm_prices.lookup(lookup_model_key(model))
+    if row is None or row.provider not in _LIST_PRICED:
+        return None
+    if row.input is None or row.output is None:
+        return None
+    return row
+
+
+def model_rates(model: str) -> tuple[float, float]:
+    """(input, output) USD per 1M tokens for *model*; (0.0, 0.0) when unknown."""
+    row = _list_price(model)
+    if row is not None:
+        return row.input, row.output
     # Try the provider-stripped ID first ("meta/llama-3.3-70b-instruct" for
     # nim/), then the bare model name — the latter is what prices gateway
     # routes like openrouter/deepseek/deepseek-v4-flash, which would otherwise
     # report $0.00 and sail straight past the cost budget in
     # quota.record_usage.
-    ic, oc = COSTS.get(bare_model(model)) or COSTS.get(lookup_model_key(model), (0.0, 0.0))
+    return COSTS.get(bare_model(model)) or COSTS.get(lookup_model_key(model), (0.0, 0.0))
+
+
+def calc_cost(model: str, in_tok: int, out_tok: int,
+              cache_read_tok: int = 0, cache_write_tok: int = 0) -> float:
+    """Estimate USD cost. Anthropic reports cached tokens separately from
+    input_tokens, priced at 0.1x (read) / 1.25x (write) of the input rate —
+    omitting them would silently under-report spend once prompt caching is
+    active. List-priced models use their own published cache rates."""
+    row = _list_price(model)
+    if row is not None:
+        ic, oc = row.input, row.output
+        cr = row.cache_read if row.cache_read is not None else ic * 0.1
+        cw = row.rate("cache_write", "5m")
+        cw = cw if cw is not None else ic * 1.25
+        cache = cache_read_tok * cr + cache_write_tok * cw
+        return (in_tok * ic + out_tok * oc + cache) / 1_000_000
+    ic, oc = model_rates(model)
     cache = (cache_read_tok * 0.1 + cache_write_tok * 1.25) * ic
     return (in_tok * ic + out_tok * oc + cache) / 1_000_000
 

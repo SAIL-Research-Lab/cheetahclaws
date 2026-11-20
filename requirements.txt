@@ -5,6 +5,7 @@ httpx>=0.27.0
 rich>=13.0.0
 pyte>=0.8.0            # terminal emulator for !claude / !python bridge rendering
 prompt_toolkit>=3.0.43 # interactive REPL: typing-time completion (/model picker, slash menu)
+llm-prices>=1.8.0      # dated list prices for Anthropic/OpenAI/Gemini cost and budget math (zero deps)
 
 # ── Optional dependencies ────────────────────────────────────────────────
 # Voice input:  pip install cheetahclaws[voice]
