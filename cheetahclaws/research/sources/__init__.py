@@ -22,7 +22,7 @@ Domain assignment decides which sources run for a given domain filter:
     finance  → polymarket, sec_edgar
     news     → google_news
     social   → reddit, hackernews
-    web      → tavily, brave  (+ google_news as a free fallback)
+    web      → tavily, brave, keenable  (+ google_news as a free fallback)
 """
 from __future__ import annotations
 
@@ -94,3 +94,4 @@ from . import bilibili as _bili                   # noqa: E402, F401
 from . import weibo as _wb                        # noqa: E402, F401
 from . import xiaohongshu as _xhs                 # noqa: E402, F401
 from . import serply_scholar as _sps              # noqa: E402, F401
+from . import keenable as _kn                     # noqa: E402, F401

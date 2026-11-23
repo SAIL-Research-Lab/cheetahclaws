@@ -70,6 +70,7 @@ No configuration required — 13 of 21 sources work out of the box.
 |---|---|---|---|
 | **Tavily** | web, news, tech, finance, academic | `TAVILY_API_KEY` | 1000 req/month free |
 | **Brave Search** | web, news, tech, finance | `BRAVE_API_KEY` | 2000 req/month free |
+| **Keenable** | web | `KEENABLE_API_KEY`, or `KEENABLE_KEYLESS=1` for the keyless endpoint | Keyless: 1,000 req/hour per IP, no account. Queries are logged by Keenable with or without a key ([data policy](https://docs.keenable.ai/data-privacy)) |
 | **Twitter / X** | social, news | `X_API_BEARER_TOKEN` (or `TWITTER_BEARER_TOKEN`) | v2 recent-search, 7d window, rate-limited per tier |
 | **知乎 Zhihu** | social, tech, finance, news | `ZHIHU_COOKIE` | Paste `d_c0; z_c0` from browser; Zhihu blocks anonymous API |
 | **微博 Weibo** | social, news | `WEIBO_COOKIE` | Paste `SUB; SUBP` from m.weibo.cn after logging in; the mobile API returns `ok: -100` anonymously |
