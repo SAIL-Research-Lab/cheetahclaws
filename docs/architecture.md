@@ -323,6 +323,7 @@ based on the model string:
 "openrouter/deepseek/deepseek-v4-flash" → openrouter  (400+ models, one key)
 "requesty/openai/gpt-4o-mini"           → requesty    (700+ models, one key)
 "runcrate/zai-org/GLM-5.3"              → runcrate    (open models, one key)
+"standardcompute/StandardCompute"       → standardcompute  (routed or pinned, one key)
 ```
 
 `stream(model, system, messages, tool_schemas, config) -> Generator`
@@ -330,7 +331,7 @@ is the one entry point agent.py uses.  Internally it dispatches to
 `stream_anthropic()` (native SDK) or `stream_openai_compat()` (used by
 every OpenAI-compatible provider).
 
-**Gateway model IDs are multi-level.** OpenRouter, Requesty, Runcrate, NIM and LiteLLM
+**Gateway model IDs are multi-level.** OpenRouter, Requesty, Runcrate, Standard Compute, NIM and LiteLLM
 address models by an upstream `<vendor>/<model>` path, so only the first
 segment is the provider and `bare_model()` deliberately strips just that
 one.  Two consequences the rest of the file relies on:

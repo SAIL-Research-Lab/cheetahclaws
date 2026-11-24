@@ -215,6 +215,29 @@ IDs have no price entry, so `/cost` records tokens but estimates $0, and the
 context window is the gateway default of 128k (raise it with
 `/config context_window=<N>`).
 
+### Standard Compute (routed or pinned models, one key)
+
+[Standard Compute](https://standardcompute.com) serves open and frontier
+models behind one OpenAI-compatible endpoint (`https://api.stdcmpt.com/v1`).
+Get a key at [standardcompute.com/dashboard](https://standardcompute.com/dashboard);
+the model list is public at `GET https://api.stdcmpt.com/v1/models`.
+
+```bash
+export STANDARDCOMPUTE_API_KEY=...        # or: /config standardcompute_api_key=...
+
+cheetahclaws --model standardcompute/StandardCompute          # routed
+cheetahclaws --model standardcompute/z-ai/glm-5.3             # pinned
+cheetahclaws --model standardcompute/anthropic/claude-sonnet-5.5
+```
+
+`StandardCompute` is a routed model: each request goes to the cheapest enabled
+model that can handle it, with automatic fallback. Any other ID from the model
+list pins that model. As with OpenRouter, the first segment (`standardcompute`)
+is the provider and everything after it is sent verbatim as the model ID. These
+IDs have no price entry, so `/cost` records tokens but estimates $0, and the
+context window is the gateway default of 128k unless the model is in the
+built-in registry (raise it with `/config context_window=<N>`).
+
 ### LiteLLM (AWS Bedrock / Azure / Vertex AI)
 
 Use the `litellm/` prefix when the upstream needs auth that's painful to
