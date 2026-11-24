@@ -171,7 +171,7 @@ Claude Code is a powerful, production-grade AI coding assistant — but its sour
 
 | Feature | Details |
 |---|---|
-| Multi-provider | Anthropic · OpenAI · Gemini · Kimi · Qwen · Zhipu · DeepSeek · MiniMax · OpenRouter · Requesty · Runcrate · Ollama · LM Studio · Custom endpoint |
+| Multi-provider | Anthropic · OpenAI · Gemini · Kimi · Qwen · Zhipu · DeepSeek · MiniMax · OpenRouter · Requesty · Runcrate · CloudGPU · Ollama · LM Studio · Custom endpoint |
 | Agent loop | Streaming API + automatic tool-use loop; the whole loop is in `agent.py` |
 | 28 built-in tools | Read · Write · Edit · Bash · Glob · Grep · WebFetch · WebSearch · NotebookEdit · GetDiagnostics · Memory* · Agent/SendMessage · Skill · AskUserQuestion · Task* · SleepTimer · EnterPlanMode/ExitPlanMode · *(MCP + plugin tools auto-added)* |
 | Tool profiles | `tool_profile` trims the tool surface sent each turn to save prompt tokens: `full` (default, everything) · `standard` (compact coding) · `research` (web + documents) · `orchestration` (agents + tasks). Set with `/config tool_profile=standard`. [Guide](docs/guides/usage.md#tool-profiles-tool_profile) |
@@ -217,6 +217,7 @@ Claude Code is a powerful, production-grade AI coding assistant — but its sour
 | **OpenRouter** _(400+ models, one key)_ | `openrouter/deepseek/deepseek-v4-flash` · `openrouter/anthropic/claude-sonnet-4-6` · `openrouter/openai/gpt-5` | varies | `OPENROUTER_API_KEY` |
 | **Requesty** _(700+ models, one key)_ | `requesty/openai/gpt-4o-mini` · `requesty/anthropic/claude-sonnet-4-6` · `requesty/claude-sonnet-4-6` | varies | `REQUESTY_API_KEY` |
 | **Runcrate** _(open models, one key)_ | `runcrate/deepseek-ai/DeepSeek-V4.1-Flash` · `runcrate/zai-org/GLM-5.3` · `runcrate/moonshotai/Kimi-K2.6` | varies | `RUNCRATE_API_KEY` |
+| **CloudGPU** _(DeepSeek · Kimi · GLM · Qwen, one key)_ | `cloudgpu/deepseek-v4.1-flash` · `cloudgpu/kimi-k3` · `cloudgpu/glm-5.2` | varies | `CLOUDGPU_API_KEY` |
 | **AWS Bedrock / Azure / Vertex** _(via litellm)_ | `litellm/<provider>/<model>` | varies | provider-specific |
 
 > **`openrouter/` gateway:** one key for 400+ models across vendors. The model ID keeps OpenRouter's upstream `<vendor>/<model>` path, so the call is double-prefixed: `openrouter/deepseek/deepseek-v4-flash`. To pin which upstream provider (and quantization) serves the request, append `@<provider>[/<quantization>]` — `openrouter/deepseek/deepseek-v4-flash@gmicloud/fp8` — which is sent as OpenRouter's `provider` request-body object rather than glued into the model ID. See [usage.md](docs/guides/usage.md#openrouter-400-models-one-key).
@@ -338,6 +339,8 @@ cheetahclaws --model requesty/claude-sonnet-4-6       # managed policy ID
 ```
 
 Runcrate (`runcrate/<vendor>/<model>`, open models) is set up the same way — see [usage.md](docs/guides/usage.md#runcrate-open-models-one-key).
+
+CloudGPU (`cloudgpu/<model>`) works the same way with its own key — see [usage.md](docs/guides/usage.md#cloudgpu).
 
 **AWS Bedrock / Azure / Vertex** use the `litellm/<provider>/<model>` form (`pip install ".[litellm]"`) — full env-var recipes in [recipes.md](docs/guides/recipes.md#alternative-cloud-providers-with-non-trivial-auth-via-the-litellm-provider).
 
