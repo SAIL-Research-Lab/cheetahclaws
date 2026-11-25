@@ -1586,3 +1586,48 @@ def test_aggregator_threads_time_range_into_sources(monkeypatch):
     assert any_received, "Expected at least one source to receive time_range"
     for val in any_received:
         assert getattr(val, "is_bounded", False)
+
+
+def test_keenable_skips_without_key_or_opt_in(monkeypatch):
+    from cheetahclaws.research.sources import SourceSkipped, keenable
+    monkeypatch.delenv("KEENABLE_API_KEY", raising=False)
+    monkeypatch.delenv("KEENABLE_KEYLESS", raising=False)
+    with pytest.raises(SourceSkipped):
+        keenable.search("q", 5, {})
+
+
+def test_keenable_keyed_request_and_mapping(monkeypatch):
+    from cheetahclaws.research.sources import keenable
+    monkeypatch.delenv("KEENABLE_KEYLESS", raising=False)
+    fixture = {"results": [
+        {"title": "A", "url": "https://a.example/1", "snippet": "x" * 900},
+        {"title": "B", "url": "https://b.example/2", "description": "desc"},
+        {"title": "", "url": "https://c.example/3"},
+    ]}
+    with mock.patch("cheetahclaws.research.sources.keenable.post_json",
+                    return_value=fixture) as pj:
+        rs = keenable.search("q", 50, {"keenable_api_key": "k"})
+    url, payload = pj.call_args.args
+    assert url == "https://api.keenable.ai/v1/search"
+    assert payload == {"query": "q", "max_results": 20}
+    assert pj.call_args.kwargs["headers"] == {"X-API-Key": "k"}
+    assert [r.url for r in rs] == ["https://a.example/1", "https://b.example/2"]
+    assert len(rs[0].snippet) == 500
+    assert rs[1].snippet == "desc"
+    assert all(r.source == "keenable" and r.domain == "web" for r in rs)
+
+
+def test_keenable_keyless_opt_in_uses_public_endpoint(monkeypatch):
+    from cheetahclaws.research.sources import keenable
+    monkeypatch.delenv("KEENABLE_API_KEY", raising=False)
+    monkeypatch.setenv("KEENABLE_KEYLESS", "1")
+    with mock.patch("cheetahclaws.research.sources.keenable.post_json",
+                    return_value={"results": []}) as pj:
+        assert keenable.search("q", 5, {}) == []
+    assert pj.call_args.args[0] == "https://api.keenable.ai/v1/search/public"
+    assert pj.call_args.kwargs["headers"] == {"X-Keenable-Title": "CheetahClaws"}
+
+
+def test_keenable_is_optional_tier():
+    from cheetahclaws.research.sources import SOURCES
+    assert SOURCES["keenable"].tier == "optional"
