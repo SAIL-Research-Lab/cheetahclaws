@@ -12,6 +12,7 @@ Supported providers:
   openrouter — OpenRouter (openrouter/deepseek/deepseek-v4-flash, ...)
   requesty   — Requesty (requesty/openai/gpt-4o-mini, requesty/claude-sonnet-4-6, ...)
   runcrate   — Runcrate (runcrate/deepseek-ai/DeepSeek-V4.1-Flash, runcrate/zai-org/GLM-5.3, ...)
+  llmtr      — LLMTR (llmtr/qwen/qwen3.8-flash, llmtr/anthropic/claude-sonnet-5, ...)
   minimax    — MiniMax (MiniMax-Text-01, abab6.5s-chat, ...)
   ollama     — Local Ollama (llama3.3, qwen2.5-coder, ...)
   lmstudio   — Local LM Studio (any loaded model)
@@ -25,7 +26,7 @@ Model string formats:
   "openrouter/<vendor>/<model>"  multi-level path: the first segment is the
   provider, everything after it is passed through as the upstream model ID
   (e.g. "openrouter/deepseek/deepseek-v4-flash"). Also used by nim/, requesty/,
-  runcrate/ and litellm/.
+  runcrate/, llmtr/ and litellm/.
   "openrouter/<vendor>/<model>@<provider>[/<quant>]"  optional routing suffix:
   pins the secondary OpenRouter provider (and quantization level) via the
   `provider` request body, keeping the model field a real model ID.
@@ -190,6 +191,26 @@ PROVIDERS: dict[str, dict] = {
             "Qwen/Qwen3.8-Flash",
             "moonshotai/Kimi-K2.6",
             "openai/gpt-oss-120b",
+        ],
+    },
+    # LLMTR: prepaid OpenAI-compatible gateway. Get a key at
+    # https://llmtr.com/dashboard/keys. Model IDs are <vendor>/<model> paths
+    # (full list at GET https://llmtr.com/v1/models, public), passed through
+    # verbatim after the first segment:
+    #   /model llmtr/qwen/qwen3.8-flash
+    # A few newer models only accept the Responses API; pick one that lists
+    # /v1/chat/completions in its supported_endpoints.
+    "llmtr": {
+        "type":       "openai",
+        "api_key_env": "LLMTR_API_KEY",
+        "base_url":   "https://llmtr.com/v1",
+        "context_limit": 128000,
+        "max_completion_tokens": 16384,
+        "models": [
+            "qwen/qwen3.8-flash",
+            "deepseek/deepseek-v4-pro",
+            "anthropic/claude-sonnet-5",
+            "openai/gpt-5.4-mini",
         ],
     },
     "minimax": {
