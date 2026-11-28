@@ -215,6 +215,27 @@ IDs have no price entry, so `/cost` records tokens but estimates $0, and the
 context window is the gateway default of 128k (raise it with
 `/config context_window=<N>`).
 
+### LLMTR (prepaid gateway, one key)
+
+[LLMTR](https://llmtr.com) is a prepaid OpenAI-compatible gateway
+(`https://llmtr.com/v1`). Create a key at
+[llmtr.com/dashboard/keys](https://llmtr.com/dashboard/keys); the model list
+with context windows and prices is public at `GET https://llmtr.com/v1/models`.
+
+```bash
+export LLMTR_API_KEY=...                  # or: /config llmtr_api_key=...
+
+cheetahclaws --model llmtr/qwen/qwen3.8-flash
+cheetahclaws --model llmtr/anthropic/claude-sonnet-5
+cheetahclaws --model llmtr/deepseek/deepseek-v4-pro
+```
+
+As with OpenRouter, the first segment (`llmtr`) is the provider and everything
+after it is sent verbatim as the `<vendor>/<model>` model ID. Pick a model whose
+`supported_endpoints` in `/v1/models` includes `/v1/chat/completions`; a few
+newer models only accept the Responses API. The context window is the gateway
+default of 128k (raise it with `/config context_window=<N>`).
+
 ### LiteLLM (AWS Bedrock / Azure / Vertex AI)
 
 Use the `litellm/` prefix when the upstream needs auth that's painful to
